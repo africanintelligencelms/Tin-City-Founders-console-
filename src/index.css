@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+:root {
+  --tcf-green: #0D4734;
+  --tcf-green-dark: #08291E;
+  --tcf-green-light: #165F47;
+  --tcf-gold: #E5A93C;
+  --tcf-gold-dark: #BF7E1D;
+  --tcf-gold-light: #F4BF58;
+  --tcf-cream: #F6F3EC;
+  --tcf-cream-light: #FAF8F4;
+  --tcf-black: #09251B;
+}
+
+@layer base {
+  body {
+    font-family: 'Manrope', system-ui, sans-serif;
+    background-color: #F6F3EC;
+    color: #09251B;
+    min-height: 100vh;
+  }
+}
+
+.font-display {
+  font-family: 'Oswald', sans-serif;
+}
+
+/* Subtle Plateau Gemstone Diamond Pattern */
+.bg-diamond-pattern {
+  background-color: #0D4734;
+  background-image: radial-gradient(rgba(229, 169, 60, 0.15) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+
+.bg-cream-grid {
+  background-color: #F6F3EC;
+  background-image: radial-gradient(rgba(13, 71, 52, 0.08) 1px, transparent 0);
+  background-size: 20px 20px;
+}
+
+/* Custom scrollbar matching Forest Green & Gemstone Gold */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #EAF2EE;
+}
+::-webkit-scrollbar-thumb {
+  background: #0D4734;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #E5A93C;
+}

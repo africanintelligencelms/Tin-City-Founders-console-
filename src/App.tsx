@@ -1,0 +1,601 @@
+import React, { useState, useEffect } from 'react';
+import { NavigationTab, PlateauProblem, AttendeeProfile, ToastNotification } from './types';
+import { Header } from './components/Header';
+import { ProblemVoting } from './components/ProblemVoting';
+import { AttendeeDirectory } from './components/AttendeeDirectory';
+import { JoinQR } from './components/JoinQR';
+import { SpeedFounding } from './components/SpeedFounding';
+import { IcebreakerPrompts } from './components/IcebreakerPrompts';
+import { FounderBingo } from './components/FounderBingo';
+import { Scoreboard } from './components/Scoreboard';
+import { FounderCheckInModal } from './components/FounderCheckInModal';
+import { ToastContainer } from './components/ToastContainer';
+import { VotingParticleProvider } from './components/VotingParticleManager';
+import { RoomLiveAnalyticsModal } from './components/RoomLiveAnalyticsModal';
+
+// Default initial problems in case server endpoint is loading
+const defaultInitialProblems: PlateauProblem[] = [
+  {
+    id: 'prob-1',
+    title: 'Cold-Chain & Solar Preservation for Potato & Tomato Farmers in Vom/Bokkos',
+    description: 'Post-harvest loss reaches over 40% for Plateau fresh produce due to lack of off-grid solar cold storage and direct market logistics. Founders can build IoT monitored cold hubs and order matching.',
+    category: 'Agro-Tech & Cold Chain',
+    submittedBy: 'Pamela D. (Jos South)',
+    upvotes: 42,
+    commitments: 18,
+    status: 'Active Squad',
+    collaborators: ['Pamela D.', 'Mark G.', 'Chidi O.', 'Yusuf K.'],
+    skillsNeeded: ['IoT Hardware', 'Solar Power Engineer', 'Mobile App Dev', 'Agro Logistics'],
+    createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
+    comments: [
+      { id: 'c1', author: 'Mark G.', text: 'I have experience with ESP32 sensors and temperature logging. Happy to lead hardware build in Rayfield!', date: '2 days ago' },
+      { id: 'c2', author: 'Chidi O.', text: 'We can link this to our logistics web platform for Plateau farm off-takers in Abuja and Lagos.', date: '1 day ago' }
+    ]
+  },
+  {
+    id: 'prob-2',
+    title: 'Uninterrupted Mesh Internet & Power Hub for Tech Nodes across Anglo Jos & Bukuru',
+    description: 'Frequent power cuts and fiber outages disrupt remote engineering teams in Jos. Need a co-funded solar micro-grid + Starlink failover mesh shared among tech hubs and startups.',
+    category: 'Infrastructure',
+    submittedBy: 'Gyang K. (Rayfield)',
+    upvotes: 35,
+    commitments: 14,
+    status: 'Ideation',
+    collaborators: ['Gyang K.', 'Esther M.', 'Suleiman B.'],
+    skillsNeeded: ['Network Engineering', 'Solar System Integrator', 'Community Organizing'],
+    createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
+    comments: [
+      { id: 'c3', author: 'Esther M.', text: 'We can set up a shared node at our hub in Anglo Jos as a pilot test site.', date: 'Yesterday' }
+    ]
+  },
+  {
+    id: 'prob-3',
+    title: 'Global Export & Payment Gateway for Jos Artisanal Mining & Gemstone Crafters',
+    description: 'Plateau gemstone miners & lapidary artisans lack direct international escrow, verified authenticity passports, and cross-border payment integration for high-value export markets.',
+    category: 'Commerce & Export',
+    submittedBy: 'Bilikisu A. (Jos North)',
+    upvotes: 29,
+    commitments: 11,
+    status: 'Squad Forming',
+    collaborators: ['Bilikisu A.', 'David T.'],
+    skillsNeeded: ['Fintech / Stripe API', 'Product Design', 'Compliance / Export Law'],
+    createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+    comments: []
+  },
+  {
+    id: 'prob-4',
+    title: 'Jos Tech Talent Pipeline: Industry-Gated Apprenticeships for Unije / PLASU Graduates',
+    description: 'Computer science grads from University of Jos and Plateau State University struggle with practical production code. Need a 12-week open-source project incubator matched with local startup mentors.',
+    category: 'Tech Talent & Education',
+    submittedBy: 'Engr. Victor (Unijos)',
+    upvotes: 51,
+    commitments: 25,
+    status: 'Prototype Built',
+    collaborators: ['Engr. Victor', 'Ruth E.', 'Solomon P.', 'Zainab H.'],
+    skillsNeeded: ['Senior Mentors', 'Curriculum Leads', 'DevOps Engineers'],
+    createdAt: new Date(Date.now() - 86400000 * 7).toISOString(),
+    comments: [
+      { id: 'c4', author: 'Ruth E.', text: 'First cohort of 15 apprentices starting next month at nHub space!', date: '3 days ago' }
+    ]
+  }
+];
+
+// Default sample checked-in attendees
+const defaultInitialAttendees: AttendeeProfile[] = [
+  {
+    id: 'att-1',
+    name: 'Pamela Dung',
+    title: 'Founder @ AgriPlateau ColdHubs',
+    tags: ['Agro-Tech & Cold Chain', 'Hardware & Solar', 'Founder / CEO'],
+    bio: 'Building IoT solar cold-storage containers for Irish potato farmers in Bokkos and Mangu.',
+    giveAsk: 'Give: IoT firmware / ESP32 architecture help. Ask: Introductions to farm off-takers and cooperatives.',
+    location: 'Jos South (Vom/Bukuru)',
+    avatarColor: '#0D4734',
+    checkedInAt: new Date(Date.now() - 1000 * 60 * 45).toISOString()
+  },
+  {
+    id: 'att-2',
+    name: 'Gyang Kim',
+    title: 'Lead Systems Engineer @ PeakMesh',
+    tags: ['Infrastructure', 'AI & Software', 'DevOps & Cloud'],
+    bio: 'Setting up failover wireless mesh grids and solar battery backups for tech workspaces in Jos.',
+    giveAsk: 'Give: Network routing & cloud server hosting tips. Ask: Landlord permission for rooftop antennas in Rayfield.',
+    location: 'Rayfield, Jos',
+    avatarColor: '#166E52',
+    checkedInAt: new Date(Date.now() - 1000 * 60 * 30).toISOString()
+  },
+  {
+    id: 'att-3',
+    name: 'Bilikisu Ahmed',
+    title: 'Co-Founder @ JosGems Marketplace',
+    tags: ['Commerce & Export', 'Fintech & Payments', 'Product & UX Design'],
+    bio: 'Empowering Plateau artisanal mineral lapidaries with digital escrow verification and global DHL shipping.',
+    giveAsk: 'Give: Export customs compliance & UI/UX feedback. Ask: React Native developer for mobile checkout.',
+    location: 'Jos North / Central',
+    avatarColor: '#E5A93C',
+    checkedInAt: new Date(Date.now() - 1000 * 60 * 20).toISOString()
+  },
+  {
+    id: 'att-4',
+    name: 'Solomon Pwajok',
+    title: 'Full-Stack Dev & Unijos CS Mentor',
+    tags: ['Tech Talent & Education', 'AI & Software', 'Student / Builder'],
+    bio: 'Passionate about open-source developer tooling and training the next generation of Plateau tech builders.',
+    giveAsk: 'Give: Fullstack code reviews (React/Node/Python). Ask: Startup internships for top 10 graduating students.',
+    location: 'University of Jos / PLASU',
+    avatarColor: '#BF7E1D',
+    checkedInAt: new Date(Date.now() - 1000 * 60 * 10).toISOString()
+  }
+];
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<NavigationTab>('voting');
+  const [problems, setProblems] = useState<PlateauProblem[]>(defaultInitialProblems);
+  const [attendees, setAttendees] = useState<AttendeeProfile[]>(defaultInitialAttendees);
+  const [currentProfile, setCurrentProfile] = useState<AttendeeProfile | null>(null);
+  const [isCheckInModalOpen, setIsCheckInModalOpen] = useState<boolean>(false);
+  const [isAnalyticsModalOpen, setIsAnalyticsModalOpen] = useState<boolean>(false);
+  const [isFirstVisit, setIsFirstVisit] = useState<boolean>(false);
+  const [userVotedIds, setUserVotedIds] = useState<string[]>([]);
+  const [userCommittedIds, setUserCommittedIds] = useState<string[]>([]);
+  const [toasts, setToasts] = useState<ToastNotification[]>([]);
+
+  // Toast Notification Dispatcher
+  const addToast = (toastData: Omit<ToastNotification, 'id'>) => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    setToasts(prev => [
+      ...prev.slice(-3), // Keep max 4 toasts at a time
+      { ...toastData, id }
+    ]);
+  };
+
+  const handleDismissToast = (id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  };
+
+  // Initial data loading on mount
+  useEffect(() => {
+    // 1. Fetch problems
+    const fetchProblems = async () => {
+      try {
+        const res = await fetch('/api/problems');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.problems)) {
+            setProblems(data.problems);
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching problems from server:', err);
+      }
+    };
+
+    // 2. Fetch attendees
+    const fetchAttendees = async () => {
+      try {
+        const res = await fetch('/api/attendees');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.attendees)) {
+            setAttendees(data.attendees);
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching attendees from server:', err);
+      }
+    };
+
+    fetchProblems();
+    fetchAttendees();
+
+    // 3. Restore user profile & votes from localStorage
+    try {
+      const savedProfile = localStorage.getItem('tcf_my_profile');
+      if (savedProfile) {
+        setCurrentProfile(JSON.parse(savedProfile));
+      } else {
+        // First-time visitor walking in: prompt check-in modal
+        setIsFirstVisit(true);
+        setIsCheckInModalOpen(true);
+      }
+
+      const savedVotes = localStorage.getItem('tcf_user_votes');
+      if (savedVotes) setUserVotedIds(JSON.parse(savedVotes));
+
+      const savedCommits = localStorage.getItem('tcf_user_commits');
+      if (savedCommits) setUserCommittedIds(JSON.parse(savedCommits));
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  // Save profile handler
+  const handleSaveProfile = async (profile: AttendeeProfile) => {
+    setCurrentProfile(profile);
+    try {
+      localStorage.setItem('tcf_my_profile', JSON.stringify(profile));
+      setIsFirstVisit(false);
+      addToast({
+        type: 'success',
+        title: 'Founder Checked In',
+        message: `${profile.name} is now checked in to the Tin City Founders room.`,
+        author: profile.name,
+        duration: 4000
+      });
+    } catch (e) {
+      console.error(e);
+    }
+
+    // Post to server
+    try {
+      const res = await fetch('/api/attendees', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profile)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.attendees) {
+          setAttendees(data.attendees);
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to sync attendee with server:', err);
+    }
+
+    // Fallback local state update
+    setAttendees(prev => {
+      const exists = prev.some(a => a.id === profile.id);
+      if (exists) {
+        return prev.map(a => a.id === profile.id ? profile : a);
+      }
+      return [profile, ...prev];
+    });
+  };
+
+  // Save user vote tracking to local storage
+  const saveUserVoteLocal = (problemId: string, isCommit: boolean) => {
+    if (!userVotedIds.includes(problemId)) {
+      const updatedVotes = [...userVotedIds, problemId];
+      setUserVotedIds(updatedVotes);
+      try {
+        localStorage.setItem('tcf_user_votes', JSON.stringify(updatedVotes));
+      } catch (e) {}
+    }
+
+    if (isCommit && !userCommittedIds.includes(problemId)) {
+      const updatedCommits = [...userCommittedIds, problemId];
+      setUserCommittedIds(updatedCommits);
+      try {
+        localStorage.setItem('tcf_user_commits', JSON.stringify(updatedCommits));
+      } catch (e) {}
+    }
+  };
+
+  // Upvote or Commit Squad action
+  const handleVote = async (id: string, commit: boolean, name?: string) => {
+    const isFirstVote = !userVotedIds.includes(id);
+    const isFirstCommit = !userCommittedIds.includes(id);
+    saveUserVoteLocal(id, commit);
+
+    const collaboratorName = name || currentProfile?.name || 'Jos Founder';
+    const targetProblem = problems.find(p => p.id === id);
+
+    // Trigger non-intrusive bottom toast notifications
+    if (commit) {
+      addToast({
+        type: 'squad_joined',
+        title: `${collaboratorName} Joined the Squad!`,
+        message: `Pledged to collaborate on: "${targetProblem?.title || 'Plateau Problem'}"`,
+        sector: targetProblem?.category,
+        author: collaboratorName,
+        duration: 5000
+      });
+    } else if (isFirstVote) {
+      addToast({
+        type: 'upvote',
+        title: 'Challenge Upvoted',
+        message: `Supported: "${targetProblem?.title || 'Plateau Challenge'}"`,
+        sector: targetProblem?.category,
+        duration: 3500
+      });
+    }
+
+    try {
+      const res = await fetch(`/api/problems/${id}/vote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commit, name: collaboratorName })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.problems) {
+          setProblems(data.problems);
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('Server vote failed, updating locally:', err);
+    }
+
+    // Fallback local update
+    setProblems(prev => prev.map(p => {
+      if (p.id === id) {
+        const newCollaborators = commit && !p.collaborators.includes(collaboratorName) 
+          ? [...p.collaborators, collaboratorName] 
+          : p.collaborators;
+        return {
+          ...p,
+          upvotes: p.upvotes + 1,
+          commitments: commit ? p.commitments + 1 : p.commitments,
+          collaborators: newCollaborators
+        };
+      }
+      return p;
+    }));
+  };
+
+  // Add new Plateau problem / Topic proposal
+  const handleAddProblem = async (newProbData: {
+    title: string;
+    description: string;
+    category: string;
+    submittedBy: string;
+    skillsNeeded: string[];
+    autoUpvote?: boolean;
+    autoCommit?: boolean;
+  }) => {
+    const author = newProbData.submittedBy || (currentProfile ? `${currentProfile.name}${currentProfile.title ? ` (${currentProfile.title})` : ''}` : 'Jos Founder');
+
+    // Trigger non-intrusive bottom toast notifications for new problem
+    addToast({
+      type: 'problem_submitted',
+      title: newProbData.title,
+      message: `Challenge published in ${newProbData.category}. Open for founder upvotes and squad formation!`,
+      sector: newProbData.category,
+      author: author,
+      duration: 5500
+    });
+
+    if (newProbData.autoCommit) {
+      setTimeout(() => {
+        addToast({
+          type: 'squad_joined',
+          title: `${author} Joined as Squad Lead`,
+          message: `Committed to building and leading the squad for "${newProbData.title}".`,
+          sector: newProbData.category,
+          author: author,
+          duration: 5000
+        });
+      }, 450);
+    }
+
+    try {
+      const res = await fetch('/api/problems', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...newProbData,
+          submittedBy: author
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.problems) {
+          setProblems(data.problems);
+          if (data.problem) {
+            if (newProbData.autoUpvote !== false) {
+              saveUserVoteLocal(data.problem.id, false);
+            }
+            if (newProbData.autoCommit) {
+              saveUserVoteLocal(data.problem.id, true);
+            }
+          }
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to send problem to server, using local fallback:', err);
+    }
+
+    // Fallback local creation
+    const isCommit = newProbData.autoCommit === true;
+    const newProblemObj: PlateauProblem = {
+      id: `prob-${Date.now()}`,
+      title: newProbData.title,
+      description: newProbData.description,
+      category: newProbData.category,
+      submittedBy: author,
+      upvotes: 1,
+      commitments: isCommit ? 1 : 0,
+      status: isCommit ? 'Squad Forming' : 'Ideation',
+      collaborators: [author],
+      skillsNeeded: newProbData.skillsNeeded,
+      createdAt: new Date().toISOString(),
+      comments: []
+    };
+
+    setProblems(prev => [newProblemObj, ...prev]);
+    if (newProbData.autoUpvote !== false) {
+      saveUserVoteLocal(newProblemObj.id, false);
+    }
+    if (isCommit) {
+      saveUserVoteLocal(newProblemObj.id, true);
+    }
+  };
+
+  // Add comment to problem
+  const handleAddComment = async (id: string, author: string, text: string) => {
+    const authorName = author || currentProfile?.name || 'Tin City Founder';
+    try {
+      const res = await fetch(`/api/problems/${id}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ author: authorName, text })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.problems) {
+          setProblems(data.problems);
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to send comment to server, updating locally:', err);
+    }
+
+    // Fallback local update
+    setProblems(prev => prev.map(p => {
+      if (p.id === id) {
+        return {
+          ...p,
+          comments: [
+            ...p.comments,
+            { id: `c-${Date.now()}`, author: authorName, text, date: 'Just now' }
+          ]
+        };
+      }
+      return p;
+    }));
+  };
+
+  // Update problem's category assignment
+  const handleUpdateProblemCategory = async (problemId: string, newCategory: string) => {
+    try {
+      const res = await fetch(`/api/problems/${problemId}/category`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: newCategory })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.problems) {
+          setProblems(data.problems);
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to update category on server, updating locally:', err);
+    }
+
+    // Fallback local update
+    setProblems(prev => prev.map(p => p.id === problemId ? { ...p, category: newCategory } : p));
+  };
+
+  // Total voted count for badge
+  const totalVotesCount = problems.reduce((sum, p) => sum + p.upvotes, 0);
+  const totalSquadsCount = problems.reduce((sum, p) => sum + p.commitments, 0);
+
+  return (
+    <VotingParticleProvider>
+      <div className="min-h-screen flex flex-col bg-[#F6F3EC] text-[#09251B]">
+        {/* Navigation Header */}
+        <Header
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          votedCount={userVotedIds.length}
+          attendeeCount={attendees.length}
+          currentProfile={currentProfile}
+          onOpenProfile={() => setIsCheckInModalOpen(true)}
+          onOpenAnalytics={() => setIsAnalyticsModalOpen(true)}
+        />
+
+        {/* Main View Area */}
+        <main className="flex-1 py-4 sm:py-6">
+          {activeTab === 'voting' && (
+            <ProblemVoting
+              problems={problems}
+              onVote={handleVote}
+              onAddProblem={handleAddProblem}
+              onAddComment={handleAddComment}
+              onUpdateProblemCategory={handleUpdateProblemCategory}
+              userVotedIds={userVotedIds}
+              userCommittedIds={userCommittedIds}
+              currentProfile={currentProfile}
+              attendees={attendees}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+            />
+          )}
+
+          {activeTab === 'attendees' && (
+            <AttendeeDirectory
+              attendees={attendees}
+              currentProfile={currentProfile}
+              onOpenCheckIn={() => setIsCheckInModalOpen(true)}
+            />
+          )}
+
+          {activeTab === 'join' && (
+            <JoinQR
+              attendeesCount={attendees.length}
+              latestProblem={problems[0] || null}
+              onOpenCheckIn={() => setIsCheckInModalOpen(true)}
+              onSaveProfile={handleSaveProfile}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+              onOpenAnalytics={() => setIsAnalyticsModalOpen(true)}
+            />
+          )}
+
+          {activeTab === 'speed' && <SpeedFounding />}
+
+          {activeTab === 'prompts' && <IcebreakerPrompts />}
+
+          {activeTab === 'bingo' && <FounderBingo />}
+
+          {activeTab === 'score' && (
+            <Scoreboard
+              totalProblemsVoted={totalVotesCount}
+              totalSquadsFormed={totalSquadsCount}
+              onOpenAnalytics={() => setIsAnalyticsModalOpen(true)}
+            />
+          )}
+        </main>
+
+        {/* Profile / Check-in Modal */}
+        <FounderCheckInModal
+          isOpen={isCheckInModalOpen}
+          onClose={() => setIsCheckInModalOpen(false)}
+          currentProfile={currentProfile}
+          onSaveProfile={handleSaveProfile}
+          isFirstCheckIn={isFirstVisit}
+        />
+
+        {/* Deep Room Live Analytics & Collective Visualization Modal */}
+        <RoomLiveAnalyticsModal
+          isOpen={isAnalyticsModalOpen}
+          onClose={() => setIsAnalyticsModalOpen(false)}
+          problems={problems}
+          attendees={attendees}
+          onVoteProblem={(id) => handleVote(id, false)}
+          onNavigateTab={(tab) => {
+            setIsAnalyticsModalOpen(false);
+            setActiveTab(tab);
+          }}
+        />
+
+        {/* Non-intrusive Toast Notifications (Bottom Screen) */}
+        <ToastContainer
+          toasts={toasts}
+          onDismiss={handleDismissToast}
+          onToastClick={() => setActiveTab('voting')}
+        />
+
+        {/* Footer */}
+        <footer className="py-4 px-6 border-t-3 border-[#09251B] bg-[#0D4734] text-[#FAF6EE] font-display font-black text-xs tracking-wider text-center uppercase shadow-inner">
+          <div className="flex items-center justify-center gap-2">
+            <span>TIN CITY FOUNDERS</span>
+            <span className="text-[#E5A93C]">◆</span>
+            <span>SERIOUS AMBITION · SERIOUS COLLABORATION</span>
+            <span className="text-[#E5A93C]">◆</span>
+            <span>JOS, PLATEAU STATE</span>
+          </div>
+        </footer>
+      </div>
+    </VotingParticleProvider>
+  );
+}
