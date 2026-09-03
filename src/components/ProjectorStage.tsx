@@ -38,9 +38,10 @@ import {
   HelpCircle
 } from 'lucide-react';
 import jsQR from 'jsqr';
-import { PlateauProblem, AttendeeProfile, NavigationTab, TrusteeCandidate } from '../types';
+import { PlateauProblem, AttendeeProfile, NavigationTab, TrusteeCandidate, RoomSessionState } from '../types';
 import { BrandLogo } from './BrandLogo';
 import { TRUSTEE_SEATS, INITIAL_TRUSTEE_CANDIDATES } from '../data/trusteeSeatsData';
+import { StageConductorBar } from './StageConductorBar';
 
 interface ProjectorStageProps {
   attendeesCount?: number;
@@ -48,6 +49,10 @@ interface ProjectorStageProps {
   problems?: PlateauProblem[];
   attendees?: AttendeeProfile[];
   trusteeCandidates?: TrusteeCandidate[];
+  sessionState?: RoomSessionState;
+  onUpdateSessionState?: (partial: Partial<RoomSessionState>) => Promise<void>;
+  onBroadcastAnnouncement?: (message: string) => Promise<void>;
+  connectedClientsCount?: number;
   onOpenCheckIn?: () => void;
   onSaveProfile?: (profile: AttendeeProfile) => void;
   onNavigateTab?: (tab: NavigationTab) => void;
@@ -77,6 +82,10 @@ export const ProjectorStage: React.FC<ProjectorStageProps> = ({
   problems = [],
   attendees = [],
   trusteeCandidates: liveTrusteeCandidates,
+  sessionState,
+  onUpdateSessionState,
+  onBroadcastAnnouncement,
+  connectedClientsCount = 1,
   onOpenCheckIn,
   onSaveProfile,
   onNavigateTab,
@@ -95,7 +104,7 @@ export const ProjectorStage: React.FC<ProjectorStageProps> = ({
   // Active QR URL Slot
   const [activeSlot, setActiveSlot] = useState<'console' | 'wa' | 'form'>('console');
   const [urls, setUrls] = useState<{ console: string; wa: string; form: string }>({
-    console: typeof window !== 'undefined' ? window.location.href : 'https://tincityfounders.jos',
+    console: typeof window !== 'undefined' ? `${window.location.origin}?mode=audience` : 'https://tincityfounders.jos?mode=audience',
     wa: 'https://chat.whatsapp.com/TinCityFoundersGroup',
     form: 'https://forms.gle/TinCityGiveAndAskForm'
   });
@@ -138,17 +147,17 @@ export const ProjectorStage: React.FC<ProjectorStageProps> = ({
   // Load saved URLs
   useEffect(() => {
     try {
-      const currentOrigin = window.location.href;
+      const defaultAudienceOrigin = `${window.location.origin}?mode=audience`;
       const saved = localStorage.getItem('tcf_urls');
       if (saved) {
         const parsed = JSON.parse(saved);
         setUrls({
-          console: parsed.console || currentOrigin,
+          console: parsed.console || defaultAudienceOrigin,
           wa: parsed.wa || 'https://chat.whatsapp.com/TinCityFoundersGroup',
           form: parsed.form || 'https://forms.gle/TinCityGiveAndAskForm'
         });
       } else {
-        setUrls(prev => ({ ...prev, console: currentOrigin }));
+        setUrls(prev => ({ ...prev, console: defaultAudienceOrigin }));
       }
     } catch (e) {
       console.error(e);
@@ -529,6 +538,19 @@ export const ProjectorStage: React.FC<ProjectorStageProps> = ({
         accept="image/*" 
         className="hidden" 
       />
+
+      {/* Stage Conductor Remote Control for Host */}
+      {sessionState && onUpdateSessionState && (
+        <div className="mb-4">
+          <StageConductorBar
+            sessionState={sessionState}
+            onUpdateSessionState={onUpdateSessionState}
+            onBroadcastAnnouncement={onBroadcastAnnouncement || (async () => {})}
+            connectedClientsCount={connectedClientsCount}
+            isCompact={false}
+          />
+        </div>
+      )}
 
       {/* TOP BAR: Controls & Stage Switchers */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-[#E5A93C]/20 mb-4">

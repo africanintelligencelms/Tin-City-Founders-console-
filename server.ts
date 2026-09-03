@@ -646,6 +646,32 @@ let activityLogs: Array<{
   }
 ];
 
+// Room Session Phase / Host Conductor State
+type RoomPhase = "welcome" | "problem_pitch" | "voting" | "trustee_election" | "squad_commit" | "free_roam";
+
+interface RoomSessionState {
+  activePhase: RoomPhase;
+  phaseTitle: string;
+  announcement: {
+    id: string;
+    message: string;
+    author: string;
+    timestamp: number;
+  } | null;
+  pinnedProblemId?: string;
+  allowAudienceNavigation: boolean;
+  updatedAt: number;
+}
+
+let roomSessionState: RoomSessionState = {
+  activePhase: "voting",
+  phaseTitle: "Live Plateau Problem Voting & Squad Formation",
+  announcement: null,
+  pinnedProblemId: undefined,
+  allowAudienceNavigation: true,
+  updatedAt: Date.now()
+};
+
 // Try reading initial state from file if exists
 try {
   if (fs.existsSync(STATE_FILE)) {
@@ -657,6 +683,9 @@ try {
     if (parsed.trusteeCandidates && Array.isArray(parsed.trusteeCandidates)) trusteeCandidates = parsed.trusteeCandidates;
     if (parsed.activityLogs && Array.isArray(parsed.activityLogs)) activityLogs = parsed.activityLogs;
     if (parsed.voteRecords && Array.isArray(parsed.voteRecords)) voteRecords = parsed.voteRecords;
+    if (parsed.roomSessionState && typeof parsed.roomSessionState === "object") {
+      roomSessionState = { ...roomSessionState, ...parsed.roomSessionState };
+    }
     console.log(`Loaded room state from disk cache (${voteRecords.length} vote records).`);
   }
 } catch (e) {
@@ -677,6 +706,7 @@ function persistState() {
       trusteeCandidates,
       activityLogs,
       voteRecords,
+      roomSessionState,
       lastSaved: Date.now()
     };
     // Atomic write: a crash mid-write can never leave a truncated state file behind.
@@ -735,12 +765,14 @@ function broadcastStateUpdate(actionType: string, summary: string, author = "Roo
     })),
     trusteeCandidates,
     activityLogs,
+    sessionState: roomSessionState,
     telemetry: {
       attendeesCount: attendees.length,
       problemsCount: problems.length,
       totalVotes: problems.reduce((acc, p) => acc + (p.upvotes || 0), 0),
       totalSquadMembers: problems.reduce((acc, p) => acc + (p.commitments || 0), 0),
-      totalTrusteeVotes: trusteeCandidates.reduce((acc, c) => acc + (c.votes || 0), 0)
+      totalTrusteeVotes: trusteeCandidates.reduce((acc, c) => acc + (c.votes || 0), 0),
+      activeSSEConnections: sseClients.size
     },
     serverTime: Date.now()
   });
@@ -770,12 +802,14 @@ app.get("/api/live/stream", (req, res) => {
     })),
     trusteeCandidates,
     activityLogs,
+    sessionState: roomSessionState,
     telemetry: {
       attendeesCount: attendees.length,
       problemsCount: problems.length,
       totalVotes: problems.reduce((acc, p) => acc + (p.upvotes || 0), 0),
       totalSquadMembers: problems.reduce((acc, p) => acc + (p.commitments || 0), 0),
-      totalTrusteeVotes: trusteeCandidates.reduce((acc, c) => acc + (c.votes || 0), 0)
+      totalTrusteeVotes: trusteeCandidates.reduce((acc, c) => acc + (c.votes || 0), 0),
+      activeSSEConnections: sseClients.size
     },
     serverTime: Date.now()
   };
@@ -820,6 +854,7 @@ app.get("/api/live/sync", (_req, res) => {
     })),
     trusteeCandidates,
     activityLogs,
+    sessionState: roomSessionState,
     telemetry: {
       attendeesCount: attendees.length,
       problemsCount: problems.length,
@@ -830,6 +865,109 @@ app.get("/api/live/sync", (_req, res) => {
     },
     serverTime: Date.now()
   });
+});
+
+// ----------------- SESSION CONDUCTOR ENDPOINTS -----------------
+
+// Get current session stage
+app.get("/api/session/state", (_req, res) => {
+  res.json({ success: true, sessionState: roomSessionState });
+});
+
+// Host Conductor updates room stage (instantly directs all audience screens)
+app.post("/api/session/state", (req, res) => {
+  const { activePhase, phaseTitle, allowAudienceNavigation, pinnedProblemId } = req.body || {};
+
+  if (activePhase) {
+    roomSessionState.activePhase = activePhase;
+  }
+  if (phaseTitle !== undefined) {
+    roomSessionState.phaseTitle = phaseTitle;
+  }
+  if (allowAudienceNavigation !== undefined) {
+    roomSessionState.allowAudienceNavigation = !!allowAudienceNavigation;
+  }
+  if (pinnedProblemId !== undefined) {
+    roomSessionState.pinnedProblemId = pinnedProblemId;
+  }
+  roomSessionState.updatedAt = Date.now();
+
+  persistState();
+
+  const phaseNames: Record<string, string> = {
+    welcome: "1. Welcome & Check-In",
+    problem_pitch: "2. Problem Pitch Floor",
+    voting: "3. Live Problem Voting",
+    trustee_election: "4. Trustee Election Matrix",
+    squad_commit: "5. Action Squad Lock-In",
+    free_roam: "6. Free Roam Mode"
+  };
+  const phaseLabel = phaseNames[roomSessionState.activePhase] || roomSessionState.activePhase;
+
+  broadcastStateUpdate("session_phase_changed", `Stage Conductor moved room to: ${phaseLabel}`, "Host Conductor");
+  broadcastSSE("SESSION_PHASE_CHANGED", { sessionState: roomSessionState });
+
+  res.json({ success: true, sessionState: roomSessionState });
+});
+
+// Host Conductor broadcasts an instant alert banner to audience screens
+app.post("/api/session/broadcast", (req, res) => {
+  const { message, author, durationMs } = req.body || {};
+  if (!message || typeof message !== "string") {
+    return res.status(400).json({ success: false, error: "Broadcast message is required" });
+  }
+
+  const announcement = {
+    id: `ann-${Date.now()}`,
+    message: message.trim().slice(0, 200),
+    author: author ? String(author).trim().slice(0, 60) : "Stage Host",
+    timestamp: Date.now()
+  };
+
+  roomSessionState.announcement = announcement;
+  roomSessionState.updatedAt = Date.now();
+  persistState();
+
+  broadcastSSE("ANNOUNCEMENT_BROADCAST", { announcement });
+  broadcastStateUpdate("host_broadcast", `Host Announcement: "${announcement.message}"`, announcement.author);
+
+  // Auto-clear announcement after duration (default 20 seconds)
+  const timeoutMs = typeof durationMs === "number" && durationMs > 0 ? durationMs : 20000;
+  setTimeout(() => {
+    if (roomSessionState.announcement?.id === announcement.id) {
+      roomSessionState.announcement = null;
+      persistState();
+      broadcastSSE("ANNOUNCEMENT_CLEARED", { id: announcement.id });
+    }
+  }, timeoutMs);
+
+  res.json({ success: true, announcement, sessionState: roomSessionState });
+});
+
+// Dismiss announcement
+app.delete("/api/session/broadcast", (_req, res) => {
+  roomSessionState.announcement = null;
+  roomSessionState.updatedAt = Date.now();
+  persistState();
+  broadcastSSE("ANNOUNCEMENT_CLEARED", {});
+  res.json({ success: true, sessionState: roomSessionState });
+});
+
+// Audience live reaction (🔥, 💡, 👏, 🚀, ⭐) during pitches and live talks
+app.post("/api/session/react", (req, res) => {
+  const { emoji, author } = req.body || {};
+  const allowed = ["🔥", "💡", "👏", "🚀", "⭐", "❤️", "⚡"];
+  const sanitizedEmoji = allowed.includes(emoji) ? emoji : "🔥";
+
+  const reaction = {
+    id: `react-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    emoji: sanitizedEmoji,
+    author: author ? String(author).trim().slice(0, 40) : "Audience",
+    timestamp: Date.now()
+  };
+
+  broadcastSSE("AUDIENCE_REACTION", reaction);
+  res.json({ success: true, reaction });
 });
 
 // ----------------- VOTER ENDPOINTS -----------------

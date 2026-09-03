@@ -134,3 +134,35 @@ export interface MyVotes {
   categories: string[];
   trustees: string[];
 }
+
+export type RoomPhase =
+  | 'welcome'           // Check-In & Attendee Directory
+  | 'problem_pitch'     // Pitch Floor & Live Reactions
+  | 'voting'            // Upvote Problems & Sector Priorities
+  | 'trustee_election'  // 12 Founding Trustees CAMA Election Matrix
+  | 'squad_commit'      // Action Squad Formation & WhatsApp Roster
+  | 'free_roam';        // Free Roam (Unlocked for all views)
+
+export interface LiveAnnouncement {
+  id: string;
+  message: string;
+  author: string;
+  timestamp: number;
+}
+
+export interface LiveReactionEvent {
+  id: string;
+  emoji: string;
+  author?: string;
+  timestamp: number;
+}
+
+export interface RoomSessionState {
+  activePhase: RoomPhase;
+  phaseTitle?: string;
+  announcement?: LiveAnnouncement | null;
+  pinnedProblemId?: string;
+  allowAudienceNavigation: boolean;
+  updatedAt: number;
+}
+

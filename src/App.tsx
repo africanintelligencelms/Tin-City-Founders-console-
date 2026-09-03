@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { NavigationTab, PlateauProblem, AttendeeProfile, ToastNotification } from './types';
+import { NavigationTab, PlateauProblem, AttendeeProfile, ToastNotification, RoomSessionState } from './types';
 import type { TrusteeCandidate, CategoryInfo, MyVotes } from './types';
 import { INITIAL_TRUSTEE_CANDIDATES } from './data/trusteeSeatsData';
 import { Header } from './components/Header';
@@ -14,6 +14,8 @@ import { FounderCheckInModal } from './components/FounderCheckInModal';
 import { ToastContainer } from './components/ToastContainer';
 import { VotingParticleProvider } from './components/VotingParticleManager';
 import { RoomLiveAnalyticsModal } from './components/RoomLiveAnalyticsModal';
+import { AudienceParticipationView } from './components/AudienceParticipationView';
+import { StageConductorBar } from './components/StageConductorBar';
 
 // Default initial problems in case server endpoint is loading
 const defaultInitialProblems: PlateauProblem[] = [
@@ -152,6 +154,34 @@ export default function App() {
   const [latencyMs, setLatencyMs] = useState<number | null>(18);
   const [reconnectCounter, setReconnectCounter] = useState(0);
 
+  // Audience Streamlined Mode & Stage Session Conductor State
+  const [isAudienceMode, setIsAudienceMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('mode') === 'audience' || params.has('join') || window.location.pathname === '/join';
+  });
+
+  const [roomSessionState, setRoomSessionState] = useState<RoomSessionState>({
+    activePhase: 'voting',
+    phaseTitle: 'Live Plateau Problem Voting & Squad Formation',
+    announcement: null,
+    allowAudienceNavigation: true,
+    updatedAt: Date.now()
+  });
+
+  const handleToggleAudienceMode = (enableAudience: boolean) => {
+    setIsAudienceMode(enableAudience);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (enableAudience) {
+        url.searchParams.set('mode', 'audience');
+      } else {
+        url.searchParams.delete('mode');
+      }
+      window.history.pushState({}, '', url.toString());
+    }
+  };
+
   // Toast Notification Dispatcher
   const addToast = (toastData: Omit<ToastNotification, 'id'>) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -203,6 +233,43 @@ export default function App() {
     if (data.attendees && Array.isArray(data.attendees)) setAttendees(data.attendees);
     if (data.trusteeCandidates && Array.isArray(data.trusteeCandidates)) setTrusteeCandidates(data.trusteeCandidates);
     if (data.categories && Array.isArray(data.categories)) setLiveCategories(data.categories);
+    if (data.sessionState) setRoomSessionState(data.sessionState);
+  };
+
+  // Stage Conductor Remote Control Handlers
+  const handleUpdateSessionState = async (partial: Partial<RoomSessionState>) => {
+    try {
+      const res = await fetch('/api/session/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(partial)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.sessionState) setRoomSessionState(data.sessionState);
+      }
+    } catch (err) {
+      console.error('Failed to update session state:', err);
+    }
+  };
+
+  const handleBroadcastAnnouncement = async (message: string) => {
+    try {
+      const res = await fetch('/api/session/broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          author: currentProfile?.name || 'Stage Host'
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.sessionState) setRoomSessionState(data.sessionState);
+      }
+    } catch (err) {
+      console.error('Failed to broadcast announcement:', err);
+    }
   };
 
   // Restore user profile & local votes from localStorage
@@ -269,6 +336,58 @@ export default function App() {
           } catch (err) {
             console.error('Failed to parse live broadcast update:', err);
           }
+        });
+
+        // Stage session phase changed by host
+        eventSource.addEventListener('SESSION_PHASE_CHANGED', (e: MessageEvent) => {
+          if (isCancelled) return;
+          try {
+            const data = JSON.parse(e.data);
+            if (data.sessionState) {
+              setRoomSessionState(data.sessionState);
+              addToast({
+                type: 'info',
+                title: `Room Phase: ${data.sessionState.activePhase.toUpperCase()}`,
+                message: data.sessionState.phaseTitle || 'Stage host switched the active session phase.',
+                duration: 4000
+              });
+            }
+          } catch (err) {
+            console.error('Failed to parse session phase event:', err);
+          }
+        });
+
+        // Live host announcement broadcast
+        eventSource.addEventListener('ANNOUNCEMENT_BROADCAST', (e: MessageEvent) => {
+          if (isCancelled) return;
+          try {
+            const data = JSON.parse(e.data);
+            if (data.announcement) {
+              setRoomSessionState(prev => ({ ...prev, announcement: data.announcement }));
+              addToast({
+                type: 'info',
+                title: `Stage Broadcast from ${data.announcement.author || 'Host'}`,
+                message: data.announcement.message,
+                duration: 6000
+              });
+            }
+          } catch (err) {
+            console.error('Failed to parse announcement event:', err);
+          }
+        });
+
+        eventSource.addEventListener('ANNOUNCEMENT_CLEARED', () => {
+          if (isCancelled) return;
+          setRoomSessionState(prev => ({ ...prev, announcement: null }));
+        });
+
+        // Audience live reaction bubble event
+        eventSource.addEventListener('AUDIENCE_REACTION', (e: MessageEvent) => {
+          if (isCancelled) return;
+          try {
+            const reaction = JSON.parse(e.data);
+            // Optionally handle room reaction floating particles
+          } catch (err) {}
         });
 
         // Periodic heartbeat ping to measure latency
@@ -493,6 +612,52 @@ export default function App() {
     }));
   };
 
+  // Upvote category priority
+  const handleVoteCategory = async (categoryName: string) => {
+    const retract = myVotes.categories.includes(categoryName);
+    try {
+      const res = await fetch(`/api/categories/${encodeURIComponent(categoryName)}/vote`, {
+        method: retract ? 'DELETE' : 'POST'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.myVotes) applyMyVotes(data.myVotes);
+        if (data.categories) setLiveCategories(data.categories);
+        addToast({
+          type: 'upvote',
+          title: retract ? 'Priority Vote Removed' : 'Category Priority Voted',
+          message: `Your vote for "${categoryName}" has been updated.`,
+          duration: 3000
+        });
+      }
+    } catch (err) {
+      console.error('Failed to vote category:', err);
+    }
+  };
+
+  // Upvote trustee candidate
+  const handleVoteTrustee = async (candidateId: string) => {
+    const retract = myVotes.trustees.includes(candidateId);
+    try {
+      const res = await fetch(`/api/trustees/${candidateId}/vote`, {
+        method: retract ? 'DELETE' : 'POST'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.myVotes) applyMyVotes(data.myVotes);
+        if (data.trusteeCandidates) setTrusteeCandidates(data.trusteeCandidates);
+        addToast({
+          type: 'upvote',
+          title: retract ? 'Trustee Vote Retracted' : 'Trustee Vote Counted',
+          message: `Your vote has been recorded on the live room ledger.`,
+          duration: 3000
+        });
+      }
+    } catch (err) {
+      console.error('Failed to vote trustee:', err);
+    }
+  };
+
   // Add new Plateau problem / Topic proposal
   const handleAddProblem = async (newProbData: {
     title: string;
@@ -649,120 +814,174 @@ export default function App() {
 
   return (
     <VotingParticleProvider>
-      <div className="min-h-screen flex flex-col bg-[#F6F3EC] text-[#09251B]">
-        {/* Navigation Header */}
-        <Header
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          votedCount={userVotedIds.length}
-          attendeeCount={attendees.length}
-          currentProfile={currentProfile}
-          onOpenProfile={() => setIsCheckInModalOpen(true)}
-          onOpenAnalytics={() => setIsAnalyticsModalOpen(true)}
-          syncStatus={syncStatus}
-          latencyMs={latencyMs}
-          onReconnect={handleManualReconnect}
-        />
+      {isAudienceMode ? (
+        <div className="min-h-screen bg-[#071912] text-[#FAF6EE]">
+          <AudienceParticipationView
+            sessionState={roomSessionState}
+            problems={problems}
+            categories={liveCategories}
+            trusteeCandidates={trusteeCandidates}
+            currentProfile={currentProfile}
+            myVotes={myVotes}
+            onVoteProblem={handleVote}
+            onVoteCategory={handleVoteCategory}
+            onVoteTrustee={handleVoteTrustee}
+            onAddProblem={handleAddProblem}
+            onOpenCheckIn={() => setIsCheckInModalOpen(true)}
+            onSwitchToHostMode={() => handleToggleAudienceMode(false)}
+            syncStatus={syncStatus}
+            latencyMs={latencyMs}
+            onReconnect={handleManualReconnect}
+          />
 
-        {/* Main View Area */}
-        <main className="flex-1 py-4 sm:py-6">
-          {activeTab === 'voting' && (
-            <ProblemVoting
-              problems={problems}
-              onVote={handleVote}
-              onAddProblem={handleAddProblem}
-              onAddComment={handleAddComment}
-              onUpdateProblemCategory={handleUpdateProblemCategory}
-              userVotedIds={userVotedIds}
-              userCommittedIds={userCommittedIds}
-              currentProfile={currentProfile}
-              attendees={attendees}
-              onNavigateTab={(tab) => setActiveTab(tab)}
-              categories={liveCategories}
-              trusteeCandidates={trusteeCandidates}
-              myVotes={myVotes}
-              onMyVotesChange={applyMyVotes}
-              onNotify={addToast}
+          {/* Profile / Check-in Modal */}
+          <FounderCheckInModal
+            isOpen={isCheckInModalOpen}
+            onClose={() => setIsCheckInModalOpen(false)}
+            currentProfile={currentProfile}
+            onSaveProfile={handleSaveProfile}
+            isFirstCheckIn={isFirstVisit}
+          />
+
+          {/* Non-intrusive Toast Notifications (Bottom Screen) */}
+          <ToastContainer
+            toasts={toasts}
+            onDismiss={handleDismissToast}
+            onToastClick={() => {}}
+          />
+        </div>
+      ) : (
+        <div className="min-h-screen flex flex-col bg-[#F6F3EC] text-[#09251B]">
+          {/* Navigation Header */}
+          <Header
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            votedCount={userVotedIds.length}
+            attendeeCount={attendees.length}
+            currentProfile={currentProfile}
+            onOpenProfile={() => setIsCheckInModalOpen(true)}
+            onOpenAnalytics={() => setIsAnalyticsModalOpen(true)}
+            onSwitchToAudienceView={() => handleToggleAudienceMode(true)}
+            syncStatus={syncStatus}
+            latencyMs={latencyMs}
+            onReconnect={handleManualReconnect}
+          />
+
+          {/* Host Stage Conductor Control Ribbon */}
+          <div className="max-w-7xl mx-auto w-full px-3 sm:px-6 pt-3">
+            <StageConductorBar
+              sessionState={roomSessionState}
+              onUpdateSessionState={handleUpdateSessionState}
+              onBroadcastAnnouncement={handleBroadcastAnnouncement}
+              connectedClientsCount={attendees.length}
+              isCompact={true}
             />
-          )}
-
-          {activeTab === 'attendees' && (
-            <AttendeeDirectory
-              attendees={attendees}
-              currentProfile={currentProfile}
-              onOpenCheckIn={() => setIsCheckInModalOpen(true)}
-            />
-          )}
-
-          {activeTab === 'join' && (
-            <JoinQR
-              attendeesCount={attendees.length}
-              latestProblem={problems[0] || null}
-              problems={problems}
-              attendees={attendees}
-              trusteeCandidates={trusteeCandidates}
-              onOpenCheckIn={() => setIsCheckInModalOpen(true)}
-              onSaveProfile={handleSaveProfile}
-              onNavigateTab={(tab) => setActiveTab(tab)}
-              onOpenAnalytics={() => setIsAnalyticsModalOpen(true)}
-            />
-          )}
-
-          {activeTab === 'speed' && <SpeedFounding />}
-
-          {activeTab === 'prompts' && <IcebreakerPrompts />}
-
-          {activeTab === 'bingo' && <FounderBingo />}
-
-          {activeTab === 'score' && (
-            <Scoreboard
-              totalProblemsVoted={totalVotesCount}
-              totalSquadsFormed={totalSquadsCount}
-              onOpenAnalytics={() => setIsAnalyticsModalOpen(true)}
-            />
-          )}
-        </main>
-
-        {/* Profile / Check-in Modal */}
-        <FounderCheckInModal
-          isOpen={isCheckInModalOpen}
-          onClose={() => setIsCheckInModalOpen(false)}
-          currentProfile={currentProfile}
-          onSaveProfile={handleSaveProfile}
-          isFirstCheckIn={isFirstVisit}
-        />
-
-        {/* Deep Room Live Analytics & Collective Visualization Modal */}
-        <RoomLiveAnalyticsModal
-          isOpen={isAnalyticsModalOpen}
-          onClose={() => setIsAnalyticsModalOpen(false)}
-          problems={problems}
-          attendees={attendees}
-          onVoteProblem={(id) => handleVote(id, false)}
-          onNavigateTab={(tab) => {
-            setIsAnalyticsModalOpen(false);
-            setActiveTab(tab);
-          }}
-        />
-
-        {/* Non-intrusive Toast Notifications (Bottom Screen) */}
-        <ToastContainer
-          toasts={toasts}
-          onDismiss={handleDismissToast}
-          onToastClick={() => setActiveTab('voting')}
-        />
-
-        {/* Footer */}
-        <footer className="py-4 px-6 border-t-3 border-[#09251B] bg-[#0D4734] text-[#FAF6EE] font-display font-black text-xs tracking-wider text-center uppercase shadow-inner">
-          <div className="flex items-center justify-center gap-2">
-            <span>TIN CITY FOUNDERS</span>
-            <span className="text-[#E5A93C]">◆</span>
-            <span>SERIOUS AMBITION · SERIOUS COLLABORATION</span>
-            <span className="text-[#E5A93C]">◆</span>
-            <span>JOS, PLATEAU STATE</span>
           </div>
-        </footer>
-      </div>
+
+          {/* Main View Area */}
+          <main className="flex-1 py-3 sm:py-5">
+            {activeTab === 'voting' && (
+              <ProblemVoting
+                problems={problems}
+                onVote={handleVote}
+                onAddProblem={handleAddProblem}
+                onAddComment={handleAddComment}
+                onUpdateProblemCategory={handleUpdateProblemCategory}
+                userVotedIds={userVotedIds}
+                userCommittedIds={userCommittedIds}
+                currentProfile={currentProfile}
+                attendees={attendees}
+                onNavigateTab={(tab) => setActiveTab(tab)}
+                categories={liveCategories}
+                trusteeCandidates={trusteeCandidates}
+                myVotes={myVotes}
+                onMyVotesChange={applyMyVotes}
+                onNotify={addToast}
+              />
+            )}
+
+            {activeTab === 'attendees' && (
+              <AttendeeDirectory
+                attendees={attendees}
+                currentProfile={currentProfile}
+                onOpenCheckIn={() => setIsCheckInModalOpen(true)}
+              />
+            )}
+
+            {activeTab === 'join' && (
+              <JoinQR
+                attendeesCount={attendees.length}
+                latestProblem={problems[0] || null}
+                problems={problems}
+                attendees={attendees}
+                trusteeCandidates={trusteeCandidates}
+                sessionState={roomSessionState}
+                onUpdateSessionState={handleUpdateSessionState}
+                onBroadcastAnnouncement={handleBroadcastAnnouncement}
+                connectedClientsCount={attendees.length}
+                onOpenCheckIn={() => setIsCheckInModalOpen(true)}
+                onSaveProfile={handleSaveProfile}
+                onNavigateTab={(tab) => setActiveTab(tab)}
+                onOpenAnalytics={() => setIsAnalyticsModalOpen(true)}
+              />
+            )}
+
+            {activeTab === 'speed' && <SpeedFounding />}
+
+            {activeTab === 'prompts' && <IcebreakerPrompts />}
+
+            {activeTab === 'bingo' && <FounderBingo />}
+
+            {activeTab === 'score' && (
+              <Scoreboard
+                totalProblemsVoted={totalVotesCount}
+                totalSquadsFormed={totalSquadsCount}
+                onOpenAnalytics={() => setIsAnalyticsModalOpen(true)}
+              />
+            )}
+          </main>
+
+          {/* Profile / Check-in Modal */}
+          <FounderCheckInModal
+            isOpen={isCheckInModalOpen}
+            onClose={() => setIsCheckInModalOpen(false)}
+            currentProfile={currentProfile}
+            onSaveProfile={handleSaveProfile}
+            isFirstCheckIn={isFirstVisit}
+          />
+
+          {/* Deep Room Live Analytics & Collective Visualization Modal */}
+          <RoomLiveAnalyticsModal
+            isOpen={isAnalyticsModalOpen}
+            onClose={() => setIsAnalyticsModalOpen(false)}
+            problems={problems}
+            attendees={attendees}
+            onVoteProblem={(id) => handleVote(id, false)}
+            onNavigateTab={(tab) => {
+              setIsAnalyticsModalOpen(false);
+              setActiveTab(tab);
+            }}
+          />
+
+          {/* Non-intrusive Toast Notifications (Bottom Screen) */}
+          <ToastContainer
+            toasts={toasts}
+            onDismiss={handleDismissToast}
+            onToastClick={() => setActiveTab('voting')}
+          />
+
+          {/* Footer */}
+          <footer className="py-4 px-6 border-t-3 border-[#09251B] bg-[#0D4734] text-[#FAF6EE] font-display font-black text-xs tracking-wider text-center uppercase shadow-inner">
+            <div className="flex items-center justify-center gap-2">
+              <span>TIN CITY FOUNDERS</span>
+              <span className="text-[#E5A93C]">◆</span>
+              <span>SERIOUS AMBITION · SERIOUS COLLABORATION</span>
+              <span className="text-[#E5A93C]">◆</span>
+              <span>JOS, PLATEAU STATE</span>
+            </div>
+          </footer>
+        </div>
+      )}
     </VotingParticleProvider>
   );
 }

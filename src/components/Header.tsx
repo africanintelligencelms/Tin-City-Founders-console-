@@ -15,7 +15,8 @@ import {
   Flame, 
   Compass, 
   Check, 
-  Radio
+  Radio,
+  Smartphone
 } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
 
@@ -27,6 +28,7 @@ interface HeaderProps {
   currentProfile: AttendeeProfile | null;
   onOpenProfile: () => void;
   onOpenAnalytics?: () => void;
+  onSwitchToAudienceView?: () => void;
   syncStatus?: 'connected' | 'connecting' | 'reconnecting' | 'offline';
   latencyMs?: number | null;
   onReconnect?: () => void;
@@ -57,6 +59,7 @@ export const Header: React.FC<HeaderProps> = ({
   currentProfile,
   onOpenProfile,
   onOpenAnalytics,
+  onSwitchToAudienceView,
   syncStatus = 'connected',
   latencyMs = 18,
   onReconnect
@@ -382,6 +385,17 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </span>
         </button>
+
+        {onSwitchToAudienceView && (
+          <button
+            onClick={onSwitchToAudienceView}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-700/40 bg-emerald-900/10 hover:bg-emerald-900/20 text-[#0D4734] text-xs font-display font-bold transition cursor-pointer"
+            title="Preview Streamlined Audience Participation Mobile Remote"
+          >
+            <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
+            <span className="hidden xl:inline">Audience Remote</span>
+          </button>
+        )}
 
         {onOpenAnalytics && (
           <button
