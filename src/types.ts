@@ -126,4 +126,11 @@ export interface TrusteeCandidate {
   notes?: string;
 }
 
-
+// What this device (identified by the server's tcf_vid cookie) has already voted for
+export interface MyVotes {
+  voterId?: string;
+  problems: string[];
+  squads: string[];
+  categories: string[];
+  trustees: string[];
+}

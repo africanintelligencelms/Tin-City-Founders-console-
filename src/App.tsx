@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { NavigationTab, PlateauProblem, AttendeeProfile, ToastNotification } from './types';
+import type { TrusteeCandidate, CategoryInfo, MyVotes } from './types';
+import { INITIAL_TRUSTEE_CANDIDATES } from './data/trusteeSeatsData';
 import { Header } from './components/Header';
 import { ProblemVoting } from './components/ProblemVoting';
 import { AttendeeDirectory } from './components/AttendeeDirectory';
@@ -140,6 +142,11 @@ export default function App() {
   const [userCommittedIds, setUserCommittedIds] = useState<string[]>([]);
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
 
+  // Live room state that only the server owns
+  const [trusteeCandidates, setTrusteeCandidates] = useState<TrusteeCandidate[]>(INITIAL_TRUSTEE_CANDIDATES);
+  const [liveCategories, setLiveCategories] = useState<CategoryInfo[]>([]);
+  const [myVotes, setMyVotes] = useState<MyVotes>({ problems: [], squads: [], categories: [], trustees: [] });
+
   // Live SSE connection & latency state
   const [syncStatus, setSyncStatus] = useState<'connected' | 'connecting' | 'reconnecting' | 'offline'>('connecting');
   const [latencyMs, setLatencyMs] = useState<number | null>(18);
@@ -156,6 +163,46 @@ export default function App() {
 
   const handleDismissToast = (id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id));
+  };
+
+  // The server (tcf_vid cookie) is the source of truth for what this device has voted on
+  const applyMyVotes = (mine: Partial<MyVotes> | null | undefined) => {
+    if (!mine) return;
+    const next: MyVotes = {
+      voterId: mine.voterId,
+      problems: Array.isArray(mine.problems) ? mine.problems : [],
+      squads: Array.isArray(mine.squads) ? mine.squads : [],
+      categories: Array.isArray(mine.categories) ? mine.categories : [],
+      trustees: Array.isArray(mine.trustees) ? mine.trustees : []
+    };
+    setMyVotes(next);
+    setUserVotedIds(next.problems);
+    setUserCommittedIds(next.squads);
+    try {
+      localStorage.setItem('tcf_user_votes', JSON.stringify(next.problems));
+      localStorage.setItem('tcf_user_commits', JSON.stringify(next.squads));
+    } catch (e) {}
+  };
+
+  const refreshMyVotes = async () => {
+    try {
+      const res = await fetch('/api/votes/mine');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) applyMyVotes(data);
+      }
+    } catch (e) {
+      // Offline: keep whatever localStorage restored
+    }
+  };
+
+  // Apply a full room snapshot (SSE INIT_SYNC / STATE_UPDATE or REST /api/live/sync)
+  const applyServerSnapshot = (data: any) => {
+    if (!data) return;
+    if (data.problems && Array.isArray(data.problems)) setProblems(data.problems);
+    if (data.attendees && Array.isArray(data.attendees)) setAttendees(data.attendees);
+    if (data.trusteeCandidates && Array.isArray(data.trusteeCandidates)) setTrusteeCandidates(data.trusteeCandidates);
+    if (data.categories && Array.isArray(data.categories)) setLiveCategories(data.categories);
   };
 
   // Restore user profile & local votes from localStorage
@@ -178,6 +225,9 @@ export default function App() {
     } catch (e) {
       console.error(e);
     }
+
+    // Then let the server correct the local cache
+    refreshMyVotes();
   }, []);
 
   // Real-Time Server-Sent Events (SSE) Stream Connection
@@ -202,12 +252,7 @@ export default function App() {
           if (isCancelled) return;
           try {
             const data = JSON.parse(e.data);
-            if (data.problems && Array.isArray(data.problems)) {
-              setProblems(data.problems);
-            }
-            if (data.attendees && Array.isArray(data.attendees)) {
-              setAttendees(data.attendees);
-            }
+            applyServerSnapshot(data);
             setSyncStatus('connected');
           } catch (err) {
             console.error('Failed to parse initial sync data:', err);
@@ -219,12 +264,7 @@ export default function App() {
           if (isCancelled) return;
           try {
             const data = JSON.parse(e.data);
-            if (data.problems && Array.isArray(data.problems)) {
-              setProblems(data.problems);
-            }
-            if (data.attendees && Array.isArray(data.attendees)) {
-              setAttendees(data.attendees);
-            }
+            applyServerSnapshot(data);
             setSyncStatus('connected');
           } catch (err) {
             console.error('Failed to parse live broadcast update:', err);
@@ -248,8 +288,7 @@ export default function App() {
               .then(res => res.json())
               .then(data => {
                 if (data.success) {
-                  if (data.problems) setProblems(data.problems);
-                  if (data.attendees) setAttendees(data.attendees);
+                  applyServerSnapshot(data);
                 }
               })
               .catch(() => {});
@@ -278,8 +317,8 @@ export default function App() {
       .then(res => res.json())
       .then(data => {
         if (data.success) {
-          if (data.problems) setProblems(data.problems);
-          if (data.attendees) setAttendees(data.attendees);
+          applyServerSnapshot(data);
+          refreshMyVotes();
           addToast({
             type: 'success',
             title: 'Live Room Resynchronized',
@@ -355,14 +394,36 @@ export default function App() {
     }
   };
 
-  // Upvote or Commit Squad action
+  // Upvote (toggle) or Commit to Squad. The server enforces one vote per device.
   const handleVote = async (id: string, commit: boolean, name?: string) => {
-    const isFirstVote = !userVotedIds.includes(id);
-    const isFirstCommit = !userCommittedIds.includes(id);
-    saveUserVoteLocal(id, commit);
-
+    const alreadyVoted = userVotedIds.includes(id);
+    const alreadyCommitted = userCommittedIds.includes(id);
     const collaboratorName = name || currentProfile?.name || 'Jos Founder';
     const targetProblem = problems.find(p => p.id === id);
+
+    if (commit && alreadyCommitted) {
+      addToast({
+        type: 'info',
+        title: 'Already in this squad',
+        message: `You have already committed to "${targetProblem?.title || 'this problem'}".`,
+        duration: 3500
+      });
+      return;
+    }
+
+    // Tapping an upvote you already cast withdraws it
+    const retract = !commit && alreadyVoted;
+
+    // Optimistic local tracking; the server response below is authoritative
+    if (retract) {
+      const updatedVotes = userVotedIds.filter(v => v !== id);
+      setUserVotedIds(updatedVotes);
+      try {
+        localStorage.setItem('tcf_user_votes', JSON.stringify(updatedVotes));
+      } catch (e) {}
+    } else {
+      saveUserVoteLocal(id, commit);
+    }
 
     // Trigger non-intrusive bottom toast notifications
     if (commit) {
@@ -374,7 +435,7 @@ export default function App() {
         author: collaboratorName,
         duration: 5000
       });
-    } else if (isFirstVote) {
+    } else if (!retract) {
       addToast({
         type: 'upvote',
         title: 'Challenge Upvoted',
@@ -385,32 +446,45 @@ export default function App() {
     }
 
     try {
-      const res = await fetch(`/api/problems/${id}/vote`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ commit, name: collaboratorName })
-      });
+      const res = await fetch(
+        `/api/problems/${id}/vote`,
+        retract
+          ? { method: 'DELETE' }
+          : {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ commit, name: collaboratorName })
+            }
+      );
+      const data = await res.json().catch(() => null);
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.problems) {
-          setProblems(data.problems);
-          return;
-        }
+      // Whatever the verdict, sync to the server's truth
+      if (data?.myVotes) applyMyVotes(data.myVotes);
+      if (data?.problems && Array.isArray(data.problems)) setProblems(data.problems);
+
+      if (res.status === 409) {
+        addToast({
+          type: 'info',
+          title: commit ? 'Already in this squad' : 'Vote already counted',
+          message: data?.message || 'This device has already voted here.',
+          duration: 3500
+        });
+        return;
       }
+      if (data) return;
     } catch (err) {
       console.error('Server vote failed, updating locally:', err);
     }
 
-    // Fallback local update
+    // Offline fallback: local update only
     setProblems(prev => prev.map(p => {
       if (p.id === id) {
-        const newCollaborators = commit && !p.collaborators.includes(collaboratorName) 
-          ? [...p.collaborators, collaboratorName] 
+        const newCollaborators = commit && !p.collaborators.includes(collaboratorName)
+          ? [...p.collaborators, collaboratorName]
           : p.collaborators;
         return {
           ...p,
-          upvotes: p.upvotes + 1,
+          upvotes: Math.max(0, p.upvotes + (retract ? -1 : 1)),
           commitments: commit ? p.commitments + 1 : p.commitments,
           collaborators: newCollaborators
         };
@@ -604,6 +678,11 @@ export default function App() {
               currentProfile={currentProfile}
               attendees={attendees}
               onNavigateTab={(tab) => setActiveTab(tab)}
+              categories={liveCategories}
+              trusteeCandidates={trusteeCandidates}
+              myVotes={myVotes}
+              onMyVotesChange={applyMyVotes}
+              onNotify={addToast}
             />
           )}
 
@@ -621,6 +700,7 @@ export default function App() {
               latestProblem={problems[0] || null}
               problems={problems}
               attendees={attendees}
+              trusteeCandidates={trusteeCandidates}
               onOpenCheckIn={() => setIsCheckInModalOpen(true)}
               onSaveProfile={handleSaveProfile}
               onNavigateTab={(tab) => setActiveTab(tab)}

@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
+import crypto from "crypto";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -12,6 +13,54 @@ const APP_URL = process.env.APP_URL
   : `http://localhost:${PORT}`;
 
 app.use(express.json());
+
+// -------------------------------------------------------------
+// Voter Identity (tcf_vid cookie) - no extra deps
+// -------------------------------------------------------------
+declare global {
+  namespace Express {
+    interface Request {
+      voterId: string;
+    }
+  }
+}
+
+const VOTER_COOKIE = "tcf_vid";
+const VOTER_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
+
+function parseCookies(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!header) return out;
+  for (const part of header.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx === -1) continue;
+    const key = part.slice(0, idx).trim();
+    const val = part.slice(idx + 1).trim();
+    if (key) out[key] = decodeURIComponent(val);
+  }
+  return out;
+}
+
+app.use((req, res, next) => {
+  const cookies = parseCookies(req.headers.cookie);
+  let voterId = cookies[VOTER_COOKIE];
+  if (!voterId || !VOTER_ID_PATTERN.test(voterId)) {
+    voterId = crypto.randomUUID().replace(/-/g, "");
+    const forwardedProto = String(req.headers["x-forwarded-proto"] || "").toLowerCase();
+    const isSecure = req.secure || forwardedProto === "https";
+    const attrs = [
+      `${VOTER_COOKIE}=${voterId}`,
+      "Path=/",
+      `Max-Age=${60 * 60 * 24 * 365}`,
+      "HttpOnly",
+      "SameSite=Lax",
+      ...(isSecure ? ["Secure"] : [])
+    ];
+    res.setHeader("Set-Cookie", attrs.join("; "));
+  }
+  req.voterId = voterId;
+  next();
+});
 
 // Persistent State Storage File Path
 const DATA_DIR = path.join(process.cwd(), ".data");
@@ -142,7 +191,7 @@ const defaultAttendees = [
 ];
 
 // Initial Categories Store
-const defaultCategoriesStore: Record<string, { upvotes: number; description: string; iconName: string }> = {
+const defaultCategoriesStore: Record<string, { upvotes: number; description: string; iconName: string; baseUpvotes?: number }> = {
   "Infrastructure": {
     upvotes: 38,
     description: "Roads, transit hubs, internet mesh grids & physical facility access across Jos and Plateau State.",
@@ -453,10 +502,122 @@ const defaultTrusteeCandidates = [
 ];
 
 // Room State In-Memory Store
-let problems = [...defaultProblems];
+type ServerProblem = (typeof defaultProblems)[number] & { baseUpvotes?: number; baseCommitments?: number };
+type ServerTrustee = (typeof defaultTrusteeCandidates)[number] & { baseVotes?: number };
+
+let problems: ServerProblem[] = [...defaultProblems];
 let attendees = [...defaultAttendees];
 let categoriesStore = { ...defaultCategoriesStore };
-let trusteeCandidates = [...defaultTrusteeCandidates];
+let trusteeCandidates: ServerTrustee[] = [...defaultTrusteeCandidates];
+
+// -------------------------------------------------------------
+// Vote Integrity: one vote per voter (tcf_vid) per target
+// -------------------------------------------------------------
+type VoteKind = "problem" | "squad" | "category" | "trustee";
+
+interface VoteRecord {
+  id: string;
+  voterId: string;
+  kind: VoteKind;
+  targetId: string;
+  voterName?: string;
+  ts: number;
+}
+
+let voteRecords: VoteRecord[] = [];
+const castVotes = new Set<string>(); // `${kind}:${targetId}:${voterId}`
+
+const voteKey = (kind: VoteKind, targetId: string, voterId: string) => `${kind}:${targetId}:${voterId}`;
+
+function rebuildCastVotes() {
+  castVotes.clear();
+  for (const r of voteRecords) castVotes.add(voteKey(r.kind, r.targetId, r.voterId));
+}
+
+// Returns the new record, or null if this voter already voted on this target.
+function recordVote(kind: VoteKind, targetId: string, voterId: string, voterName?: string): VoteRecord | null {
+  const key = voteKey(kind, targetId, voterId);
+  if (castVotes.has(key)) return null;
+  const record: VoteRecord = {
+    id: `vote-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+    voterId,
+    kind,
+    targetId,
+    voterName: voterName ? String(voterName).trim().slice(0, 80) : undefined,
+    ts: Date.now()
+  };
+  voteRecords.push(record);
+  castVotes.add(key);
+  return record;
+}
+
+// Returns true if a vote was removed.
+function retractVote(kind: VoteKind, targetId: string, voterId: string): boolean {
+  const key = voteKey(kind, targetId, voterId);
+  if (!castVotes.has(key)) return false;
+  voteRecords = voteRecords.filter(r => !(r.kind === kind && r.targetId === targetId && r.voterId === voterId));
+  castVotes.delete(key);
+  return true;
+}
+
+function dropVotesForTarget(kind: VoteKind, targetId: string) {
+  voteRecords = voteRecords.filter(r => !(r.kind === kind && r.targetId === targetId));
+  rebuildCastVotes();
+}
+
+// Displayed counts = seeded base count + live vote records (never a blind increment).
+function recomputeCounts() {
+  const tally = new Map<string, number>();
+  for (const r of voteRecords) {
+    const k = `${r.kind}:${r.targetId}`;
+    tally.set(k, (tally.get(k) || 0) + 1);
+  }
+  for (const p of problems) {
+    p.upvotes = (p.baseUpvotes ?? 0) + (tally.get(`problem:${p.id}`) || 0);
+    p.commitments = (p.baseCommitments ?? 0) + (tally.get(`squad:${p.id}`) || 0);
+  }
+  for (const [name, cat] of Object.entries(categoriesStore)) {
+    cat.upvotes = (cat.baseUpvotes ?? 0) + (tally.get(`category:${name}`) || 0);
+  }
+  for (const c of trusteeCandidates) {
+    c.votes = (c.baseVotes ?? 0) + (tally.get(`trustee:${c.id}`) || 0);
+  }
+}
+
+function applySquadStatus(problem: ServerProblem) {
+  if (problem.commitments >= 3 && problem.status === "Ideation") {
+    problem.status = "Squad Forming";
+  }
+  if (problem.commitments >= 6 && problem.status === "Squad Forming") {
+    problem.status = "Active Squad";
+  }
+}
+
+function myVotesFor(voterId: string) {
+  const mine = { voterId, problems: [] as string[], squads: [] as string[], categories: [] as string[], trustees: [] as string[] };
+  for (const r of voteRecords) {
+    if (r.voterId !== voterId) continue;
+    if (r.kind === "problem") mine.problems.push(r.targetId);
+    else if (r.kind === "squad") mine.squads.push(r.targetId);
+    else if (r.kind === "category") mine.categories.push(r.targetId);
+    else if (r.kind === "trustee") mine.trustees.push(r.targetId);
+  }
+  return mine;
+}
+
+// Seeded counts become the base the first time the server runs with vote records.
+function migrateBaseCounts() {
+  for (const p of problems) {
+    if (p.baseUpvotes === undefined) p.baseUpvotes = p.upvotes || 0;
+    if (p.baseCommitments === undefined) p.baseCommitments = p.commitments || 0;
+  }
+  for (const cat of Object.values(categoriesStore)) {
+    if (cat.baseUpvotes === undefined) cat.baseUpvotes = cat.upvotes || 0;
+  }
+  for (const c of trusteeCandidates) {
+    if (c.baseVotes === undefined) c.baseVotes = c.votes || 0;
+  }
+}
 let activityLogs: Array<{
   id: string;
   type: string;
@@ -495,11 +656,16 @@ try {
     if (parsed.categoriesStore && typeof parsed.categoriesStore === "object") categoriesStore = parsed.categoriesStore;
     if (parsed.trusteeCandidates && Array.isArray(parsed.trusteeCandidates)) trusteeCandidates = parsed.trusteeCandidates;
     if (parsed.activityLogs && Array.isArray(parsed.activityLogs)) activityLogs = parsed.activityLogs;
-    console.log("Loaded room state from disk cache.");
+    if (parsed.voteRecords && Array.isArray(parsed.voteRecords)) voteRecords = parsed.voteRecords;
+    console.log(`Loaded room state from disk cache (${voteRecords.length} vote records).`);
   }
 } catch (e) {
   console.warn("Could not read cached room state, using defaults:", e);
 }
+
+migrateBaseCounts();
+rebuildCastVotes();
+recomputeCounts();
 
 // Helper to save state to disk
 function persistState() {
@@ -510,9 +676,13 @@ function persistState() {
       categoriesStore,
       trusteeCandidates,
       activityLogs,
+      voteRecords,
       lastSaved: Date.now()
     };
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+    // Atomic write: a crash mid-write can never leave a truncated state file behind.
+    const tmpFile = `${STATE_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmpFile, JSON.stringify(state, null, 2), "utf-8");
+    fs.renameSync(tmpFile, STATE_FILE);
   } catch (e) {
     // Non-fatal disk write error
   }
@@ -662,6 +832,13 @@ app.get("/api/live/sync", (_req, res) => {
   });
 });
 
+// ----------------- VOTER ENDPOINTS -----------------
+
+// What has this device already voted for? (identity = tcf_vid cookie)
+app.get("/api/votes/mine", (req, res) => {
+  res.json({ success: true, ...myVotesFor(req.voterId) });
+});
+
 // ----------------- TRUSTEES ENDPOINTS -----------------
 
 // Get all trustee candidates
@@ -695,8 +872,13 @@ app.post("/api/trustees/nominate", (req, res) => {
     return res.status(400).json({ success: false, error: "Candidate Name and Seat Number are required" });
   }
 
-  const candidateId = id || `cand-${Date.now()}`;
-  const existingIdx = trusteeCandidates.findIndex(c => c.id === candidateId || c.seatNumber === seatNumber && c.name.toLowerCase() === name.trim().toLowerCase());
+  const candidateId = id || `cand-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+  // Editing (id given) targets that candidate; a fresh nomination replaces whoever holds the seat.
+  const existingIdx = id
+    ? trusteeCandidates.findIndex(c => c.id === id)
+    : trusteeCandidates.findIndex(c => c.seatNumber === Number(seatNumber));
+  const replaced = existingIdx >= 0 ? trusteeCandidates[existingIdx] : null;
+  const isNewPerson = !replaced || replaced.id !== candidateId;
 
   const newCandidate = {
     id: candidateId,
@@ -716,9 +898,10 @@ app.post("/api/trustees/nominate", (req, res) => {
       notBankrupt: true,
       noFraudConviction: true
     },
-    votes: existingIdx >= 0 ? trusteeCandidates[existingIdx].votes : 1,
+    votes: 0,
+    baseVotes: isNewPerson ? 0 : (replaced!.baseVotes ?? replaced!.votes ?? 0),
     nominatedBy: nominatedBy || "Founders Assembly",
-    createdAt: existingIdx >= 0 ? trusteeCandidates[existingIdx].createdAt : Date.now(),
+    createdAt: isNewPerson ? Date.now() : replaced!.createdAt,
     notes: notes || ""
   };
 
@@ -728,23 +911,65 @@ app.post("/api/trustees/nominate", (req, res) => {
     trusteeCandidates.push(newCandidate);
   }
 
+  if (isNewPerson) {
+    // The person being replaced takes their endorsements with them.
+    if (replaced) dropVotesForTarget("trustee", replaced.id);
+    // The nominator's own endorsement is the candidate's first vote - and their only one.
+    recordVote("trustee", newCandidate.id, req.voterId, newCandidate.nominatedBy);
+  }
+  recomputeCounts();
+
   broadcastStateUpdate("trustee_nominated", `Nominated ${newCandidate.name} for Seat ${newCandidate.seatNumber}`, newCandidate.nominatedBy);
-  res.json({ success: true, candidate: newCandidate, candidates: trusteeCandidates });
+  res.json({ success: true, candidate: newCandidate, candidates: trusteeCandidates, myVotes: myVotesFor(req.voterId) });
 });
 
 // Vote / Endorse a trustee candidate
 app.post("/api/trustees/:id/vote", (req, res) => {
   const { id } = req.params;
-  const { voterName } = req.body;
+  const { voterName } = req.body || {};
   const candidate = trusteeCandidates.find(c => c.id === id);
 
   if (!candidate) {
     return res.status(404).json({ success: false, error: "Trustee candidate not found" });
   }
 
-  candidate.votes += 1;
+  if (!recordVote("trustee", candidate.id, req.voterId, voterName)) {
+    return res.status(409).json({
+      success: false,
+      error: "already_voted",
+      message: `You have already endorsed ${candidate.name}.`,
+      candidate,
+      candidates: trusteeCandidates,
+      myVotes: myVotesFor(req.voterId)
+    });
+  }
+  recomputeCounts();
+
   broadcastStateUpdate("trustee_voted", `Endorsed ${candidate.name} for Trustee Seat ${candidate.seatNumber}`, voterName || "Founder");
-  res.json({ success: true, candidate, candidates: trusteeCandidates });
+  res.json({ success: true, candidate, candidates: trusteeCandidates, myVotes: myVotesFor(req.voterId) });
+});
+
+// Withdraw an endorsement
+app.delete("/api/trustees/:id/vote", (req, res) => {
+  const { id } = req.params;
+  const candidate = trusteeCandidates.find(c => c.id === id);
+
+  if (!candidate) {
+    return res.status(404).json({ success: false, error: "Trustee candidate not found" });
+  }
+
+  if (!retractVote("trustee", candidate.id, req.voterId)) {
+    return res.status(404).json({
+      success: false,
+      error: "not_voted",
+      message: `You have not endorsed ${candidate.name}.`,
+      myVotes: myVotesFor(req.voterId)
+    });
+  }
+  recomputeCounts();
+
+  broadcastStateUpdate("trustee_vote_withdrawn", `An endorsement for ${candidate.name} (Seat ${candidate.seatNumber}) was withdrawn`);
+  res.json({ success: true, candidate, candidates: trusteeCandidates, myVotes: myVotesFor(req.voterId) });
 });
 
 // Update trustee R-N-T scores and flags
@@ -836,27 +1061,64 @@ app.get("/api/categories", (_req, res) => {
 });
 
 // Vote on a category
-app.post("/api/categories/:name/vote", (req, res) => {
-  const { name } = req.params;
-  const { increment } = req.body;
-  
-  if (!categoriesStore[name]) {
-    return res.status(404).json({ success: false, error: "Category not found" });
-  }
-
-  const delta = increment === false ? -1 : 1;
-  categoriesStore[name].upvotes = Math.max(0, categoriesStore[name].upvotes + delta);
-
-  const updatedCategories = Object.entries(categoriesStore).map(([catName, data]) => ({
+function serializeCategories() {
+  return Object.entries(categoriesStore).map(([catName, data]) => ({
     name: catName,
     upvotes: data.upvotes,
     description: data.description,
     iconName: data.iconName,
     problemCount: problems.filter(p => p.category === catName).length
   }));
+}
+
+app.post("/api/categories/:name/vote", (req, res) => {
+  const { name } = req.params;
+  const { increment } = req.body || {};
+
+  if (!categoriesStore[name]) {
+    return res.status(404).json({ success: false, error: "Category not found" });
+  }
+
+  // Legacy clients sent { increment: false } to un-vote; honour that as a retraction.
+  if (increment === false) {
+    if (!retractVote("category", name, req.voterId)) {
+      return res.status(404).json({ success: false, error: "not_voted", message: `You have not prioritized "${name}".`, categories: serializeCategories(), myVotes: myVotesFor(req.voterId) });
+    }
+    recomputeCounts();
+    broadcastStateUpdate("category_vote_withdrawn", `A sector priority vote for "${name}" was withdrawn`, "Founder", name);
+    return res.json({ success: true, categories: serializeCategories(), myVotes: myVotesFor(req.voterId) });
+  }
+
+  if (!recordVote("category", name, req.voterId)) {
+    return res.status(409).json({
+      success: false,
+      error: "already_voted",
+      message: `You have already prioritized "${name}".`,
+      categories: serializeCategories(),
+      myVotes: myVotesFor(req.voterId)
+    });
+  }
+  recomputeCounts();
 
   broadcastStateUpdate("category_voted", `Prioritized sector: "${name}"`, "Founder", name);
-  res.json({ success: true, categories: updatedCategories });
+  res.json({ success: true, categories: serializeCategories(), myVotes: myVotesFor(req.voterId) });
+});
+
+// Withdraw a sector priority vote
+app.delete("/api/categories/:name/vote", (req, res) => {
+  const { name } = req.params;
+
+  if (!categoriesStore[name]) {
+    return res.status(404).json({ success: false, error: "Category not found" });
+  }
+
+  if (!retractVote("category", name, req.voterId)) {
+    return res.status(404).json({ success: false, error: "not_voted", message: `You have not prioritized "${name}".`, categories: serializeCategories(), myVotes: myVotesFor(req.voterId) });
+  }
+  recomputeCounts();
+
+  broadcastStateUpdate("category_vote_withdrawn", `A sector priority vote for "${name}" was withdrawn`, "Founder", name);
+  res.json({ success: true, categories: serializeCategories(), myVotes: myVotesFor(req.voterId) });
 });
 
 // ----------------- PROBLEMS ENDPOINTS -----------------
@@ -883,8 +1145,10 @@ app.post("/api/problems", (req, res) => {
     description: description.trim(),
     category: category || "General Plateau Problem",
     submittedBy: authorName,
-    upvotes: isUpvote ? 1 : 0,
-    commitments: isCommit ? 1 : 0,
+    upvotes: 0,
+    commitments: 0,
+    baseUpvotes: 0,
+    baseCommitments: 0,
     status: (isCommit ? "Squad Forming" : "Ideation") as "Ideation" | "Squad Forming" | "Active Squad" | "Prototype Built",
     collaborators: [authorName],
     skillsNeeded: Array.isArray(skillsNeeded) && skillsNeeded.length > 0 ? skillsNeeded : ["Developers", "Domain Experts"],
@@ -894,17 +1158,23 @@ app.post("/api/problems", (req, res) => {
 
   problems.unshift(newProb);
 
+  // The author's own upvote / commitment are real, deduplicated votes.
+  if (isUpvote) recordVote("problem", newProb.id, req.voterId, authorName);
+  if (isCommit) recordVote("squad", newProb.id, req.voterId, authorName);
+
   // If category wasn't in store, create it
   if (!categoriesStore[newProb.category]) {
     categoriesStore[newProb.category] = {
       upvotes: 1,
+      baseUpvotes: 1,
       description: `Community reported challenges under ${newProb.category}.`,
       iconName: "FolderKanban"
     };
   }
+  recomputeCounts();
 
   broadcastStateUpdate("problem_created", `Submitted new problem: "${newProb.title}"`, authorName, newProb.category);
-  res.status(201).json({ success: true, problem: newProb, problems });
+  res.status(201).json({ success: true, problem: newProb, problems, myVotes: myVotesFor(req.voterId) });
 });
 
 // Update a problem's assigned category
@@ -926,6 +1196,7 @@ app.post("/api/problems/:id/category", (req, res) => {
   if (!categoriesStore[problem.category]) {
     categoriesStore[problem.category] = {
       upvotes: 1,
+      baseUpvotes: 1,
       description: `Community reported challenges under ${problem.category}.`,
       iconName: "FolderKanban"
     };
@@ -938,33 +1209,75 @@ app.post("/api/problems/:id/category", (req, res) => {
 // Vote on problem
 app.post("/api/problems/:id/vote", (req, res) => {
   const { id } = req.params;
-  const { commit, name } = req.body;
+  const { commit, name } = req.body || {};
   const problem = problems.find(p => p.id === id);
 
   if (!problem) {
     return res.status(404).json({ success: false, error: "Problem not found" });
   }
 
-  problem.upvotes += 1;
-  const collaboratorName = name ? name.trim() : "Jos Founder";
+  const collaboratorName = name ? String(name).trim() : "Jos Founder";
 
   if (commit) {
-    problem.commitments += 1;
+    if (!recordVote("squad", problem.id, req.voterId, collaboratorName)) {
+      return res.status(409).json({
+        success: false,
+        error: "already_committed",
+        message: `You are already in the squad for "${problem.title}".`,
+        problem,
+        problems,
+        myVotes: myVotesFor(req.voterId)
+      });
+    }
+    // Committing implies support - counted once, never twice.
+    recordVote("problem", problem.id, req.voterId, collaboratorName);
     if (!problem.collaborators.includes(collaboratorName)) {
       problem.collaborators.push(collaboratorName);
     }
-    if (problem.commitments >= 3 && problem.status === "Ideation") {
-      problem.status = "Squad Forming";
-    }
-    if (problem.commitments >= 6 && problem.status === "Squad Forming") {
-      problem.status = "Active Squad";
-    }
+    recomputeCounts();
+    applySquadStatus(problem);
     broadcastStateUpdate("squad_joined", `${collaboratorName} committed to squad for "${problem.title}"`, collaboratorName, problem.category);
   } else {
+    if (!recordVote("problem", problem.id, req.voterId, collaboratorName)) {
+      return res.status(409).json({
+        success: false,
+        error: "already_voted",
+        message: `You have already upvoted "${problem.title}".`,
+        problem,
+        problems,
+        myVotes: myVotesFor(req.voterId)
+      });
+    }
+    recomputeCounts();
     broadcastStateUpdate("problem_voted", `Upvoted "${problem.title}"`, collaboratorName, problem.category);
   }
 
-  res.json({ success: true, problem, problems });
+  res.json({ success: true, problem, problems, myVotes: myVotesFor(req.voterId) });
+});
+
+// Withdraw an upvote (squad commitments are not withdrawable)
+app.delete("/api/problems/:id/vote", (req, res) => {
+  const { id } = req.params;
+  const problem = problems.find(p => p.id === id);
+
+  if (!problem) {
+    return res.status(404).json({ success: false, error: "Problem not found" });
+  }
+
+  if (!retractVote("problem", problem.id, req.voterId)) {
+    return res.status(404).json({
+      success: false,
+      error: "not_voted",
+      message: `You have not upvoted "${problem.title}".`,
+      problem,
+      problems,
+      myVotes: myVotesFor(req.voterId)
+    });
+  }
+  recomputeCounts();
+
+  broadcastStateUpdate("problem_vote_withdrawn", `An upvote for "${problem.title}" was withdrawn`, "Founder", problem.category);
+  res.json({ success: true, problem, problems, myVotes: myVotesFor(req.voterId) });
 });
 
 // Join Squad directly
@@ -977,22 +1290,28 @@ app.post("/api/problems/:id/join-squad", (req, res) => {
     return res.status(404).json({ success: false, error: "Problem not found" });
   }
 
-  const founderName = name ? name.trim() : "Jos Innovator";
+  const founderName = name ? String(name).trim() : "Jos Innovator";
+
+  if (!recordVote("squad", problem.id, req.voterId, founderName)) {
+    return res.status(409).json({
+      success: false,
+      error: "already_committed",
+      message: `You are already in the squad for "${problem.title}".`,
+      problem,
+      problems,
+      myVotes: myVotesFor(req.voterId)
+    });
+  }
+  recordVote("problem", problem.id, req.voterId, founderName);
   if (!problem.collaborators.includes(founderName)) {
     problem.collaborators.push(founderName);
   }
-  problem.commitments += 1;
-
-  if (problem.commitments >= 3 && problem.status === "Ideation") {
-    problem.status = "Squad Forming";
-  }
-  if (problem.commitments >= 6 && problem.status === "Squad Forming") {
-    problem.status = "Active Squad";
-  }
+  recomputeCounts();
+  applySquadStatus(problem);
 
   const roleText = role || skill ? ` (${role || skill})` : "";
   broadcastStateUpdate("squad_joined", `${founderName}${roleText} joined the action squad for "${problem.title}"`, founderName, problem.category);
-  res.json({ success: true, problem, problems });
+  res.json({ success: true, problem, problems, myVotes: myVotesFor(req.voterId) });
 });
 
 // Add comment to problem

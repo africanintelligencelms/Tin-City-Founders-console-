@@ -47,6 +47,7 @@ interface ProjectorStageProps {
   latestProblem?: PlateauProblem | null;
   problems?: PlateauProblem[];
   attendees?: AttendeeProfile[];
+  trusteeCandidates?: TrusteeCandidate[];
   onOpenCheckIn?: () => void;
   onSaveProfile?: (profile: AttendeeProfile) => void;
   onNavigateTab?: (tab: NavigationTab) => void;
@@ -75,6 +76,7 @@ export const ProjectorStage: React.FC<ProjectorStageProps> = ({
   latestProblem,
   problems = [],
   attendees = [],
+  trusteeCandidates: liveTrusteeCandidates,
   onOpenCheckIn,
   onSaveProfile,
   onNavigateTab,
@@ -118,6 +120,13 @@ export const ProjectorStage: React.FC<ProjectorStageProps> = ({
     } catch (e) {}
     return INITIAL_TRUSTEE_CANDIDATES;
   });
+
+  // Live server snapshot (via SSE in App) beats the local cache
+  useEffect(() => {
+    if (liveTrusteeCandidates && liveTrusteeCandidates.length > 0) {
+      setTrusteeCandidates(liveTrusteeCandidates);
+    }
+  }, [liveTrusteeCandidates]);
 
   // Refs for video feed and canvas
   const videoRef = useRef<HTMLVideoElement | null>(null);
