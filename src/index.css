@@ -25,6 +25,20 @@
   font-family: 'Oswald', sans-serif;
 }
 
+/*
+ * Mobile: prevent the browser from auto-zooming (the screen "expanding")
+ * when a form control is focused. iOS Safari zooms into any field whose
+ * font-size is under 16px, so we bump form controls to 16px on small
+ * screens only. Pinch-to-zoom stays enabled; desktop styling is untouched.
+ */
+@media (max-width: 640px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
 /* Subtle Plateau Gemstone Diamond Pattern */
 .bg-diamond-pattern {
   background-color: #0D4734;
