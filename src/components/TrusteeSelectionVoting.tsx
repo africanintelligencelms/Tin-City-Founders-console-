@@ -459,6 +459,14 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
             <p className="text-xs sm:text-sm text-white/85 font-medium leading-relaxed">
               Evaluating and electing the <strong>12 statutory founding trustees</strong> for the registered Tin City Founders association using the standardized <strong>R-N-T Reliability, Network & Trust Test</strong>.
             </p>
+
+            <button
+              onClick={() => handleOpenNominate(1)}
+              className="w-fit bg-white text-[#09251B] hover:bg-[#FAF6EE] text-sm font-display font-black px-5 py-2.5 rounded-xl transition flex items-center gap-2 cursor-pointer shadow-xs active:scale-95"
+            >
+              <Plus className="w-5 h-5 text-[#0D4734]" />
+              <span>Nominate New Candidate</span>
+            </button>
           </div>
 
           {/* Quick Stat Pillboard */}
@@ -515,16 +523,6 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
             >
               <Download className="w-3.5 h-3.5" />
               <span>Export CAC Legal Roster (CSV)</span>
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleOpenNominate(1)}
-              className="bg-white text-[#09251B] hover:bg-[#FAF6EE] text-xs font-display font-black px-4 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
-            >
-              <Plus className="w-4 h-4 text-[#0D4734]" />
-              <span>Nominate New Candidate</span>
             </button>
           </div>
         </div>
