@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express, { Response } from "express";
 import path from "path";
 import fs from "fs";
@@ -5,7 +6,10 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
+const APP_URL = process.env.APP_URL
+  ? (/^https?:\/\//i.test(process.env.APP_URL) ? process.env.APP_URL : `http://${process.env.APP_URL}`)
+  : `http://localhost:${PORT}`;
 
 app.use(express.json());
 
@@ -1092,7 +1096,7 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Tin City Founders Real-Time Server running on http://0.0.0.0:${PORT}`);
+    console.log(`Tin City Founders Real-Time Server running at ${APP_URL}`);
   });
 }
 
