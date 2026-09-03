@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { PlateauProblem, AISolutionPlan, CategoryInfo, AttendeeProfile } from '../types';
+import { PlateauProblem, AISolutionPlan, CategoryInfo, AttendeeProfile, TrusteeCandidate, MyVotes, ToastNotification } from '../types';
 import { 
   ThumbsUp, Users, Plus, Sparkles, MessageSquare, Search, Filter, 
   MapPin, Tag, CheckCircle2, Bot, ArrowUpRight, Send, Loader2, X, Flame, Lightbulb,
@@ -30,6 +30,12 @@ interface ProblemVotingProps {
   currentProfile?: AttendeeProfile | null;
   attendees?: AttendeeProfile[];
   onNavigateTab?: (tab: any) => void;
+  // Live server state (owned by App, fed by SSE)
+  categories?: CategoryInfo[];
+  trusteeCandidates?: TrusteeCandidate[];
+  myVotes?: MyVotes;
+  onMyVotesChange?: (mine: MyVotes) => void;
+  onNotify?: (toast: Omit<ToastNotification, 'id'>) => void;
 }
 
 export const PREDEFINED_CATEGORIES = [
@@ -63,6 +69,11 @@ export const ProblemVoting: React.FC<ProblemVotingProps> = ({
   currentProfile,
   attendees = [],
   onNavigateTab,
+  categories: liveCategories,
+  trusteeCandidates,
+  myVotes,
+  onMyVotesChange,
+  onNotify,
 }) => {
   const { triggerVoteAnimation } = useVotingAnimation();
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
@@ -83,6 +94,20 @@ export const ProblemVoting: React.FC<ProblemVotingProps> = ({
     { name: 'Energy & Power', upvotes: 36, description: CATEGORY_DESCRIPTIONS['Energy & Power'], iconName: 'Zap' }
   ]);
   const [userVotedCategories, setUserVotedCategories] = useState<string[]>([]);
+
+  // Live sector counts pushed from the server beat the mount-time fetch
+  useEffect(() => {
+    if (liveCategories && liveCategories.length > 0) setCategoriesList(liveCategories);
+  }, [liveCategories]);
+
+  // Once the server has told us who we are, it also knows which sectors we prioritized
+  useEffect(() => {
+    if (!myVotes?.voterId) return;
+    setUserVotedCategories(myVotes.categories);
+    try {
+      localStorage.setItem('tcf_voted_categories', JSON.stringify(myVotes.categories));
+    } catch (e) {}
+  }, [myVotes?.voterId, myVotes?.categories]);
 
   // Modals & Active State
   const [isSubmitOpen, setIsSubmitOpen] = useState<boolean>(false);
@@ -179,7 +204,9 @@ export const ProblemVoting: React.FC<ProblemVotingProps> = ({
       : [...userVotedCategories, categoryName];
 
     setUserVotedCategories(updatedVoted);
-    localStorage.setItem('tcf_voted_categories', JSON.stringify(updatedVoted));
+    try {
+      localStorage.setItem('tcf_voted_categories', JSON.stringify(updatedVoted));
+    } catch (e) {}
 
     // Local optimistic update
     setCategoriesList(prev => prev.map(c => {
@@ -193,16 +220,29 @@ export const ProblemVoting: React.FC<ProblemVotingProps> = ({
     }));
 
     try {
-      const res = await fetch(`/api/categories/${encodeURIComponent(categoryName)}/vote`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ increment: !isVoted })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.categories) {
-          setCategoriesList(data.categories);
-        }
+      const res = await fetch(
+        `/api/categories/${encodeURIComponent(categoryName)}/vote`,
+        isVoted
+          ? { method: 'DELETE' }
+          : {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ increment: true })
+            }
+      );
+      const data = await res.json().catch(() => null);
+
+      // Server truth wins, whatever the verdict
+      if (data?.categories && Array.isArray(data.categories)) setCategoriesList(data.categories);
+      if (data?.myVotes && onMyVotesChange) onMyVotesChange(data.myVotes);
+
+      if (res.status === 409 && onNotify) {
+        onNotify({
+          type: 'info',
+          title: 'Sector vote already counted',
+          message: data?.message || `This device has already prioritized ${categoryName}.`,
+          duration: 3500
+        });
       }
     } catch (err) {
       console.error('Server category vote failed:', err);
@@ -499,10 +539,14 @@ export const ProblemVoting: React.FC<ProblemVotingProps> = ({
       {/* VIEW MODE 2: FOUNDING TRUSTEES SELECTION MATRIX (CAMA 2020) */}
       {dashboardViewMode === 'trustees' && (
         <div className="mb-12">
-          <TrusteeSelectionVoting 
+          <TrusteeSelectionVoting
             attendees={attendees}
             currentProfile={currentProfile}
             onNavigateTab={onNavigateTab}
+            liveCandidates={trusteeCandidates}
+            endorsedIds={myVotes?.voterId ? myVotes.trustees : undefined}
+            onMyVotesChange={onMyVotesChange}
+            onNotify={onNotify}
           />
         </div>
       )}

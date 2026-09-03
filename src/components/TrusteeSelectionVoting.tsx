@@ -31,7 +31,7 @@ import {
   CheckSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { TrusteeSeatDefinition, TrusteeCandidate, TrusteeTier, AttendeeProfile } from '../types';
+import { TrusteeSeatDefinition, TrusteeCandidate, TrusteeTier, AttendeeProfile, MyVotes, ToastNotification } from '../types';
 import { TRUSTEE_SEATS, INITIAL_TRUSTEE_CANDIDATES } from '../data/trusteeSeatsData';
 import { useVotingAnimation } from './VotingParticleManager';
 import { sounds } from '../utils/soundEffects';
@@ -40,12 +40,21 @@ interface TrusteeSelectionVotingProps {
   attendees?: AttendeeProfile[];
   currentProfile?: AttendeeProfile | null;
   onNavigateTab?: (tab: any) => void;
+  // Live server state (owned by App, fed by SSE)
+  liveCandidates?: TrusteeCandidate[];
+  endorsedIds?: string[];
+  onMyVotesChange?: (mine: MyVotes) => void;
+  onNotify?: (toast: Omit<ToastNotification, 'id'>) => void;
 }
 
 export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
   attendees = [],
   currentProfile,
-  onNavigateTab
+  onNavigateTab,
+  liveCandidates,
+  endorsedIds,
+  onMyVotesChange,
+  onNotify
 }) => {
   const { triggerVoteAnimation } = useVotingAnimation();
 
@@ -106,6 +115,27 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
     } catch (e) {}
   }, [userEndorsedIds]);
 
+  // Server truth (via SSE in App) beats the local cache
+  useEffect(() => {
+    if (liveCandidates && liveCandidates.length > 0) setCandidates(liveCandidates);
+  }, [liveCandidates]);
+
+  useEffect(() => {
+    if (endorsedIds) setUserEndorsedIds(endorsedIds);
+  }, [endorsedIds]);
+
+  // Apply a server response: candidate list + what this device has voted on
+  const syncFromServer = (data: any) => {
+    if (!data) return;
+    if (Array.isArray(data.candidates)) setCandidates(data.candidates);
+    if (data.myVotes && onMyVotesChange) onMyVotesChange(data.myVotes);
+  };
+
+  const postJson = (url: string, body: unknown, method: 'POST' | 'DELETE' = 'POST') =>
+    fetch(url, method === 'DELETE'
+      ? { method }
+      : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
   // Aggregate Board Health Metrics
   const totalSeats = 12;
   const seatsWithCandidate = useMemo(() => {
@@ -141,16 +171,18 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
     return (candidates.reduce((s, c) => s + c.scoreN, 0) / candidates.length).toFixed(1);
   }, [candidates]);
 
-  // Handle Endorsement / Upvote
-  const handleEndorse = (e: React.MouseEvent<HTMLButtonElement>, candidateId: string) => {
+  // Handle Endorsement / Upvote. One endorsement per device per candidate, enforced by the server.
+  const handleEndorse = async (e: React.MouseEvent<HTMLButtonElement>, candidateId: string) => {
     const isEndorsed = userEndorsedIds.includes(candidateId);
-    
+    const candidate = candidates.find(c => c.id === candidateId);
+
     triggerVoteAnimation(e, {
       text: isEndorsed ? '-1 Endorsement' : '⭐ +1 Trustee Vote',
       type: 'squad',
       milestone: !isEndorsed
     });
 
+    // Optimistic local update; the server response below is authoritative
     if (isEndorsed) {
       setUserEndorsedIds(prev => prev.filter(id => id !== candidateId));
       setCandidates(prev => prev.map(c => c.id === candidateId ? { ...c, votes: Math.max(0, c.votes - 1) } : c));
@@ -158,6 +190,27 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
       sounds.playSquadJoinedSound();
       setUserEndorsedIds(prev => [...prev, candidateId]);
       setCandidates(prev => prev.map(c => c.id === candidateId ? { ...c, votes: c.votes + 1 } : c));
+    }
+
+    try {
+      const res = await postJson(
+        `/api/trustees/${encodeURIComponent(candidateId)}/vote`,
+        { voterName: currentProfile?.name || 'Founder' },
+        isEndorsed ? 'DELETE' : 'POST'
+      );
+      const data = await res.json().catch(() => null);
+      syncFromServer(data);
+
+      if (res.status === 409 && onNotify) {
+        onNotify({
+          type: 'info',
+          title: 'Endorsement already counted',
+          message: data?.message || `This device has already endorsed ${candidate?.name || 'this candidate'}.`,
+          duration: 3500
+        });
+      }
+    } catch (err) {
+      console.error('Server endorsement failed, kept local state:', err);
     }
   };
 
@@ -170,17 +223,30 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
       }
       return c;
     }));
+
+    postJson(`/api/trustees/${encodeURIComponent(candidateId)}/score`, { [field]: newScore })
+      .then(res => (res.ok ? res.json() : null))
+      .then(syncFromServer)
+      .catch(err => console.error('Server score update failed:', err));
   };
 
   // Handle Toggle Reachable / Confirmed
   const handleToggleFlag = (candidateId: string, field: 'reachable' | 'confirmed') => {
     sounds.playTapSound();
+    const current = candidates.find(c => c.id === candidateId);
+    const nextValue = current ? !current[field] : true;
+
     setCandidates(prev => prev.map(c => {
       if (c.id === candidateId) {
-        return { ...c, [field]: !c[field] };
+        return { ...c, [field]: nextValue };
       }
       return c;
     }));
+
+    postJson(`/api/trustees/${encodeURIComponent(candidateId)}/score`, { [field]: nextValue })
+      .then(res => (res.ok ? res.json() : null))
+      .then(syncFromServer)
+      .catch(err => console.error('Server flag update failed:', err));
   };
 
   // Open Nominate Modal for specific seat
@@ -281,6 +347,33 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
 
       setCandidates(prev => [...prev.filter(c => c.seatNumber !== nominateForSeatNumber), newCand]);
     }
+
+    // Persist to the room server (it replaces the seat holder and records the nominator's endorsement)
+    const camaChecks = {
+      isOver18: formCama18,
+      isSoundMind: formCamaMind,
+      notBankrupt: formCamaBankrupt,
+      noFraudConviction: formCamaFraud
+    };
+    postJson('/api/trustees/nominate', {
+      id: editingCandidate ? editingCandidate.id : undefined,
+      seatNumber: nominateForSeatNumber,
+      name: formName.trim(),
+      titleOrOrg: formTitle.trim() || 'Founding Trustee Nominee',
+      bio: formBio.trim(),
+      phoneOrContact: formContact.trim(),
+      scoreR: formScoreR,
+      scoreN: formScoreN,
+      scoreT: formScoreT,
+      reachable: formReachable,
+      confirmed: formConfirmed,
+      camaChecks,
+      nominatedBy: editingCandidate ? editingCandidate.nominatedBy : (currentProfile?.name || 'Assembly Attendee'),
+      notes: formNotes.trim()
+    })
+      .then(res => (res.ok ? res.json() : null))
+      .then(syncFromServer)
+      .catch(err => console.error('Server nomination failed, kept local state:', err));
 
     sounds.playSquadJoinedSound();
     setIsNominateModalOpen(false);
