@@ -12,47 +12,54 @@ import {
 import { sounds } from '../utils/soundEffects';
 
 interface AudienceParticipationViewProps {
-  problems: PlateauProblem[];
-  attendees: AttendeeProfile[];
-  trusteeCandidates: TrusteeCandidate[];
-  categories: CategoryInfo[];
-  currentProfile: AttendeeProfile | null;
-  myVotes: MyVotes;
-  sessionState: RoomSessionState;
-  syncStatus: 'connected' | 'connecting' | 'reconnecting' | 'offline';
+  problems?: PlateauProblem[];
+  attendees?: AttendeeProfile[];
+  trusteeCandidates?: TrusteeCandidate[];
+  categories?: CategoryInfo[];
+  currentProfile?: AttendeeProfile | null;
+  myVotes?: MyVotes;
+  sessionState?: RoomSessionState;
+  syncStatus?: 'connected' | 'connecting' | 'reconnecting' | 'offline';
   latencyMs?: number | null;
-  onVoteProblem: (id: string, commit: boolean, name?: string) => void;
-  onVoteCategory: (categoryName: string) => void;
-  onVoteTrustee: (candidateId: string) => void;
-  onOpenCheckIn: () => void;
-  onSaveProfile: (profile: AttendeeProfile) => void;
-  onSwitchToFullConsole: () => void;
-  onReconnect: () => void;
-  onNotify: (toast: Omit<ToastNotification, 'id'>) => void;
-  onSubmitProblem: (prob: any) => void;
+  onVoteProblem?: (id: string, commit: boolean, name?: string) => void;
+  onVoteCategory?: (categoryName: string) => void;
+  onVoteTrustee?: (candidateId: string) => void;
+  onOpenCheckIn?: () => void;
+  onSaveProfile?: (profile: AttendeeProfile) => void;
+  onSwitchToFullConsole?: () => void;
+  onReconnect?: () => void;
+  onNotify?: (toast: Omit<ToastNotification, 'id'>) => void;
+  onSubmitProblem?: (prob: any) => void;
   onNominateTrustee?: (data: any) => void;
 }
 
 export const AudienceParticipationView: React.FC<AudienceParticipationViewProps> = ({
-  problems,
-  attendees,
-  trusteeCandidates,
-  categories,
-  currentProfile,
-  myVotes,
-  sessionState,
-  syncStatus,
+  problems = [],
+  attendees = [],
+  trusteeCandidates = [],
+  categories = [],
+  currentProfile = null,
+  myVotes = { problems: [], squads: [], categories: [], trustees: [] },
+  sessionState = {
+    activePhase: 'voting',
+    phaseTitle: 'Live Plateau Problem Voting',
+    announcement: null,
+    pinnedProblemId: undefined,
+    allowAudienceNavigation: true,
+    updatedAt: Date.now()
+  },
+  syncStatus = 'connected',
   latencyMs = 18,
-  onVoteProblem,
-  onVoteCategory,
-  onVoteTrustee,
-  onOpenCheckIn,
-  onSaveProfile,
-  onSwitchToFullConsole,
-  onReconnect,
-  onNotify,
-  onSubmitProblem,
-  onNominateTrustee
+  onVoteProblem = (_id: string, _commit: boolean, _name?: string) => {},
+  onVoteCategory = (_cat: string) => {},
+  onVoteTrustee = (_candId: string) => {},
+  onOpenCheckIn = () => {},
+  onSaveProfile = (_profile: AttendeeProfile) => {},
+  onSwitchToFullConsole = () => {},
+  onReconnect = () => {},
+  onNotify = (_toast: Omit<ToastNotification, 'id'>) => {},
+  onSubmitProblem = (_prob: any) => {},
+  onNominateTrustee = (_data: any) => {}
 }) => {
   // Navigation for Free Roam mode
   const [audienceSubTab, setAudienceSubTab] = useState<'voting' | 'directory' | 'trustees' | 'squads'>('voting');

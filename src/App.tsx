@@ -819,6 +819,7 @@ export default function App() {
           <AudienceParticipationView
             sessionState={roomSessionState}
             problems={problems}
+            attendees={attendees}
             categories={liveCategories}
             trusteeCandidates={trusteeCandidates}
             currentProfile={currentProfile}
@@ -826,12 +827,14 @@ export default function App() {
             onVoteProblem={handleVote}
             onVoteCategory={handleVoteCategory}
             onVoteTrustee={handleVoteTrustee}
-            onAddProblem={handleAddProblem}
+            onSubmitProblem={handleAddProblem}
             onOpenCheckIn={() => setIsCheckInModalOpen(true)}
-            onSwitchToHostMode={() => handleToggleAudienceMode(false)}
+            onSaveProfile={handleSaveProfile}
+            onSwitchToFullConsole={() => handleToggleAudienceMode(false)}
             syncStatus={syncStatus}
             latencyMs={latencyMs}
             onReconnect={handleManualReconnect}
+            onNotify={addToast}
           />
 
           {/* Profile / Check-in Modal */}
