@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Radio, Megaphone, Send, Lock, Unlock, QrCode, Copy, Check, Users, 
   Sparkles, Vote, Award, Handshake, Compass, ChevronDown, ChevronUp,
-  X, AlertCircle, PlayCircle, ExternalLink
+  X, AlertCircle, PlayCircle, ExternalLink, Square, Trophy, Loader2
 } from 'lucide-react';
-import { RoomPhase, RoomSessionState, ToastNotification } from '../types';
+import { RoomPhase, RoomSessionState, ToastNotification, RoundKind } from '../types';
 import { sounds } from '../utils/soundEffects';
 
 interface StageConductorBarProps {
@@ -15,6 +15,10 @@ interface StageConductorBarProps {
   onNotify?: (toast: Omit<ToastNotification, 'id'>) => void;
   onOpenQRModal?: () => void;
   isCompact?: boolean;
+  // Round lifecycle — the host picks the ballot type each round.
+  onOpenRound?: (opts: { kind: RoundKind; title: string; maxSelections: number }) => Promise<void>;
+  onCloseRound?: () => Promise<void>;
+  onClearRound?: () => Promise<void>;
 }
 
 const PHASES: Array<{
@@ -89,7 +93,10 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
   connectedClientsCount = 1,
   onNotify,
   onOpenQRModal,
-  isCompact = false
+  isCompact = false,
+  onOpenRound,
+  onCloseRound,
+  onClearRound
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(!isCompact);
   const [isBroadcastOpen, setIsBroadcastOpen] = useState<boolean>(false);
@@ -98,7 +105,68 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
   const [isQRModalOpen, setIsQRModalOpen] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
+  const [roundKind, setRoundKind] = useState<RoundKind>('problem');
+  const [roundTitle, setRoundTitle] = useState<string>('');
+  const [roundPicks, setRoundPicks] = useState<number>(1);
+  const [isRoundBusy, setIsRoundBusy] = useState<boolean>(false);
+
   const activePhaseInfo = PHASES.find(p => p.id === sessionState.activePhase) || PHASES[2];
+  const activeRound = sessionState.activeRound || null;
+
+  // Each phase suggests the ballot type it usually needs; the host can still override.
+  const PHASE_DEFAULT_KIND: Partial<Record<RoomPhase, RoundKind>> = {
+    voting: 'problem',
+    problem_pitch: 'problem',
+    trustee_election: 'trustee',
+    squad_commit: 'problem'
+  };
+
+  const ROUND_KINDS: Array<{ id: RoundKind; label: string; hint: string }> = [
+    { id: 'problem', label: 'Problems', hint: 'Every problem on the board' },
+    { id: 'category', label: 'Sectors', hint: 'Every sector category' },
+    { id: 'trustee', label: 'Trustees', hint: 'Every nominated trustee' }
+  ];
+
+  const runRoundAction = async (fn?: () => Promise<void>) => {
+    if (!fn) return;
+    setIsRoundBusy(true);
+    try {
+      await fn();
+    } catch (err) {
+      console.error('Round action failed:', err);
+      if (onNotify) {
+        onNotify({
+          type: 'info',
+          title: 'Round action failed',
+          message: err instanceof Error ? err.message : 'The server rejected that round action.',
+          duration: 5000
+        });
+      }
+    } finally {
+      setIsRoundBusy(false);
+    }
+  };
+
+  // Moving phases re-arms the ballot type that phase normally votes on.
+  useEffect(() => {
+    if (activeRound) return;
+    const suggested = PHASE_DEFAULT_KIND[sessionState.activePhase];
+    if (suggested) setRoundKind(suggested);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionState.activePhase, activeRound?.id]);
+
+  const handleOpenRound = async () => {
+    sounds.playTapSound();
+    const kindLabel = ROUND_KINDS.find(k => k.id === roundKind)?.label || roundKind;
+    await runRoundAction(() =>
+      onOpenRound!({
+        kind: roundKind,
+        title: roundTitle.trim() || `Live ${kindLabel} vote`,
+        maxSelections: Math.max(1, roundPicks)
+      })
+    );
+    setRoundTitle('');
+  };
 
   // Audience Link (points directly to audience remote mode)
   const getAudienceUrl = () => {
@@ -325,6 +393,136 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
                 );
               })}
             </div>
+
+            {/* ---------------- Voting Round Lifecycle ---------------- */}
+            {(onOpenRound || onCloseRound) && (
+              <div className="mt-4 pt-4 border-t border-emerald-800/40">
+                {!activeRound && (
+                  <>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] font-mono tracking-wider uppercase text-amber-300 font-bold">
+                        Open a Voting Round (takes over every phone):
+                      </span>
+                      <span className="text-[11px] text-white/60 font-medium">
+                        Phase stays where it is
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-end gap-2">
+                      <div className="flex gap-1.5">
+                        {ROUND_KINDS.map(k => (
+                          <button
+                            key={k.id}
+                            onClick={() => { setRoundKind(k.id); sounds.playTapSound(); }}
+                            title={k.hint}
+                            className={`px-3 py-2 rounded-xl border text-xs font-display font-bold transition cursor-pointer ${
+                              roundKind === k.id
+                                ? 'bg-amber-400 border-amber-300 text-black'
+                                : 'bg-[#09251B]/80 border-emerald-800/50 text-white/75 hover:text-white hover:border-emerald-600'
+                            }`}
+                          >
+                            {k.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <input
+                        type="text"
+                        value={roundTitle}
+                        onChange={e => setRoundTitle(e.target.value)}
+                        placeholder={`Round title (optional) — e.g. "Which problem do we fund first?"`}
+                        maxLength={120}
+                        className="flex-1 min-w-[200px] px-3 py-2 rounded-xl bg-[#09251B]/80 border border-emerald-800/50 text-white text-xs placeholder:text-white/30 focus:outline-hidden focus:border-emerald-500"
+                      />
+
+                      <label className="flex items-center gap-1.5 text-[11px] text-white/60">
+                        Picks
+                        <input
+                          type="number"
+                          min={1}
+                          max={12}
+                          value={roundPicks}
+                          onChange={e => setRoundPicks(Math.max(1, Number(e.target.value) || 1))}
+                          className="w-14 px-2 py-2 rounded-xl bg-[#09251B]/80 border border-emerald-800/50 text-white text-xs text-center focus:outline-hidden focus:border-emerald-500"
+                        />
+                      </label>
+
+                      <button
+                        onClick={handleOpenRound}
+                        disabled={isRoundBusy || !onOpenRound}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:bg-white/10 disabled:text-white/40 text-[#071912] text-xs font-display font-black transition cursor-pointer disabled:cursor-not-allowed active:scale-95"
+                      >
+                        {isRoundBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Vote className="w-4 h-4" />}
+                        Open Round
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {activeRound && activeRound.status === 'open' && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-emerald-500/15 border border-emerald-400/40">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 text-[11px] font-mono font-bold uppercase tracking-wider text-emerald-300 mb-0.5">
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+                        </span>
+                        Round Open · {activeRound.kind}
+                      </div>
+                      <div className="font-display font-black text-sm truncate">{activeRound.title}</div>
+                      <div className="text-white/50 text-[11px]">
+                        {activeRound.ballotsCast} ballot{activeRound.ballotsCast === 1 ? '' : 's'} in ·{' '}
+                        {activeRound.options.length} options · max {activeRound.maxSelections} pick
+                        {activeRound.maxSelections === 1 ? '' : 's'}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => { sounds.playTapSound(); runRoundAction(onCloseRound); }}
+                      disabled={isRoundBusy}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-black text-xs font-display font-black transition cursor-pointer active:scale-95"
+                    >
+                      {isRoundBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+                      Close & Reveal
+                    </button>
+                  </div>
+                )}
+
+                {activeRound && activeRound.status === 'revealed' && (
+                  <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-400/40">
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 text-[11px] font-mono font-bold uppercase tracking-wider text-amber-300 mb-0.5">
+                          <Trophy className="w-3.5 h-3.5" />
+                          Results Showing
+                        </div>
+                        <div className="font-display font-black text-sm truncate">{activeRound.title}</div>
+                        <div className="text-white/50 text-[11px]">
+                          {activeRound.ballotsCast} ballot{activeRound.ballotsCast === 1 ? '' : 's'} counted
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => { sounds.playTapSound(); runRoundAction(onClearRound); }}
+                        disabled={isRoundBusy}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-display font-black transition cursor-pointer active:scale-95"
+                      >
+                        {isRoundBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Compass className="w-4 h-4" />}
+                        Back to Room
+                      </button>
+                    </div>
+
+                    <div className="space-y-1">
+                      {(activeRound.results || []).slice(0, 3).map((r, i) => (
+                        <div key={r.optionId} className="flex items-center gap-2 text-xs">
+                          <span className="text-white/35 font-mono w-4">{i + 1}</span>
+                          <span className="flex-1 truncate font-semibold">{r.label}</span>
+                          <span className="font-mono font-bold text-amber-300">{r.votes}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
