@@ -652,6 +652,20 @@ function applySquadStatus(problem: ServerProblem) {
   }
 }
 
+// The ladder above only ever climbs, which is right on the way in: a squad that
+// formed stays formed while people are still joining. Leaving is the one path
+// allowed to walk it back down, using the SAME thresholds (3 / 6), so a problem
+// that drops to 2 commitments stops advertising itself as "Squad Forming".
+// "Prototype Built" is a real milestone, not a vote count, so it never moves.
+function relaxSquadStatus(problem: ServerProblem) {
+  if (problem.status === "Prototype Built") return;
+  if (problem.status === "Active Squad" && problem.commitments < 6) {
+    problem.status = problem.commitments >= 3 ? "Squad Forming" : "Ideation";
+  } else if (problem.status === "Squad Forming" && problem.commitments < 3) {
+    problem.status = "Ideation";
+  }
+}
+
 function myVotesFor(voterId: string) {
   const mine = { voterId, problems: [] as string[], squads: [] as string[], categories: [] as string[], trustees: [] as string[] };
   for (const r of voteRecords) {
@@ -1386,6 +1400,14 @@ app.delete("/api/round", requireHost, (_req, res) => {
   res.json({ success: true, round: null, history: roundHistory.slice(0, 10) });
 });
 
+// A ballot option must not vanish from under a live round. The tally is keyed
+// by option id, so deleting one mid-round would strand every ballot that picked
+// it and leave phones voting for something that no longer exists. True for a
+// round in ANY status (open or revealed) — the host closes it first.
+function isOnActiveRound(targetId: string): boolean {
+  return !!activeRound && activeRound.options.some(o => o.id === targetId);
+}
+
 // ----------------- VOTER ENDPOINTS -----------------
 
 // What has this device already voted for? (identity = tcf_vid cookie)
@@ -1441,16 +1463,24 @@ app.post("/api/trustees/nominate", (req, res) => {
     titleOrOrg: titleOrOrg ? titleOrOrg.trim() : "Tin City Founder",
     bio: bio ? bio.trim() : "",
     phoneOrContact: phoneOrContact ? phoneOrContact.trim() : "",
-    scoreR: typeof scoreR === "number" ? Math.min(5, Math.max(1, scoreR)) : 5,
-    scoreN: typeof scoreN === "number" ? Math.min(5, Math.max(1, scoreN)) : 5,
-    scoreT: typeof scoreT === "number" ? Math.min(5, Math.max(1, scoreT)) : 5,
+    // 0 means "not yet scored". A nomination from the floor sends no scores, and
+    // defaulting those to 5 made a stranger indistinguishable from a vetted
+    // candidate on the sheet the host picks legal signatories from. An
+    // explicitly supplied score still clamps to the 1-5 the console uses.
+    scoreR: typeof scoreR === "number" ? Math.min(5, Math.max(1, scoreR)) : 0,
+    scoreN: typeof scoreN === "number" ? Math.min(5, Math.max(1, scoreN)) : 0,
+    scoreT: typeof scoreT === "number" ? Math.min(5, Math.max(1, scoreT)) : 0,
     reachable: reachable !== undefined ? !!reachable : true,
     confirmed: confirmed !== undefined ? !!confirmed : true,
-    camaChecks: camaChecks || {
-      isOver18: true,
-      isSoundMind: true,
-      notBankrupt: true,
-      noFraudConviction: true
+    // Same reasoning: nobody has run a CAMA 2020 disqualification check on a
+    // name shouted from the floor, so every box starts unticked. The console
+    // sends the full object when the host nominates or edits, so its own
+    // ticking is unchanged.
+    camaChecks: {
+      isOver18: !!camaChecks?.isOver18,
+      isSoundMind: !!camaChecks?.isSoundMind,
+      notBankrupt: !!camaChecks?.notBankrupt,
+      noFraudConviction: !!camaChecks?.noFraudConviction
     },
     votes: 0,
     baseVotes: isNewPerson ? 0 : (replaced!.baseVotes ?? replaced!.votes ?? 0),
@@ -1524,6 +1554,42 @@ app.delete("/api/trustees/:id/vote", (req, res) => {
 
   broadcastStateUpdate("trustee_vote_withdrawn", `An endorsement for ${candidate.name} (Seat ${candidate.seatNumber}) was withdrawn`);
   res.json({ success: true, candidate: publicTrustee(candidate), candidates: publicTrustees(), myVotes: myVotesFor(req.voterId) });
+});
+
+// Host removes a nominee from the board (duplicate, test entry, joke nomination).
+// Host-gated: the board is otherwise append-only, and this is destructive.
+app.delete("/api/trustees/:id", requireHost, (req, res) => {
+  const { id } = req.params;
+  const candidate = trusteeCandidates.find(c => c.id === id);
+
+  if (!candidate) {
+    return res.status(404).json({ success: false, error: "Trustee candidate not found" });
+  }
+
+  if (isOnActiveRound(candidate.id)) {
+    return res.status(409).json({
+      success: false,
+      error: "on_active_round",
+      message: `${candidate.name} is an option on the current voting round. Close the round first, then delete.`,
+      round: activeRound
+    });
+  }
+
+  // The nominee takes their endorsements with them - no stranded vote records.
+  dropVotesForTarget("trustee", candidate.id);
+  trusteeCandidates = trusteeCandidates.filter(c => c.id !== candidate.id);
+
+  recomputeCounts();
+  persistState();
+  // Full-snapshot broadcast, same as every other mutating route: every phone
+  // and the projector drop the nominee without a refresh.
+  broadcastStateUpdate(
+    "trustee_removed",
+    `Host removed ${candidate.name} from Trustee Seat ${candidate.seatNumber}`,
+    "Host Conductor"
+  );
+
+  res.json({ success: true, candidates: publicTrustees(), myVotes: myVotesFor(req.voterId) });
 });
 
 // Update trustee R-N-T scores and flags
@@ -1809,6 +1875,52 @@ app.post("/api/problems/:id/vote", (req, res) => {
   res.json({ success: true, problem, problems, myVotes: myVotesFor(req.voterId) });
 });
 
+// Host removes a problem from the board (duplicate, test entry, joke entry).
+// Host-gated: the board is otherwise append-only, and this is destructive.
+app.delete("/api/problems/:id", requireHost, (req, res) => {
+  const { id } = req.params;
+  const problem = problems.find(p => p.id === id);
+
+  if (!problem) {
+    return res.status(404).json({ success: false, error: "Problem not found" });
+  }
+
+  if (isOnActiveRound(problem.id)) {
+    return res.status(409).json({
+      success: false,
+      error: "on_active_round",
+      message: `"${problem.title}" is an option on the current voting round. Close the round first, then delete.`,
+      round: activeRound
+    });
+  }
+
+  // Both strands of vote record hang off a problem id: upvotes AND squad
+  // commitments. Dropping only one would leave the other stranded and skew
+  // recomputeCounts() for whatever id gets minted next.
+  dropVotesForTarget("problem", problem.id);
+  dropVotesForTarget("squad", problem.id);
+  problems = problems.filter(p => p.id !== problem.id);
+
+  // A pinned problem that no longer exists would blank the audience screens.
+  if (roomSessionState.pinnedProblemId === problem.id) {
+    roomSessionState.pinnedProblemId = undefined;
+    roomSessionState.updatedAt = Date.now();
+  }
+
+  recomputeCounts();
+  persistState();
+  // Full-snapshot broadcast, same as every other mutating route: every phone
+  // and the projector drop the card without a refresh.
+  broadcastStateUpdate(
+    "problem_deleted",
+    `Host removed problem: "${problem.title}"`,
+    "Host Conductor",
+    problem.category
+  );
+
+  res.json({ success: true, problems, myVotes: myVotesFor(req.voterId) });
+});
+
 // Withdraw an upvote (squad commitments are not withdrawable)
 app.delete("/api/problems/:id/vote", (req, res) => {
   const { id } = req.params;
@@ -1865,6 +1977,55 @@ app.post("/api/problems/:id/join-squad", (req, res) => {
 
   const roleText = role || skill ? ` (${role || skill})` : "";
   broadcastStateUpdate("squad_joined", `${founderName}${roleText} joined the action squad for "${problem.title}"`, founderName, problem.category);
+  res.json({ success: true, problem, problems, myVotes: myVotesFor(req.voterId) });
+});
+
+// Leave a squad. Deliberately an AUDIENCE route (no requireHost): a mis-tap on
+// a phone must be undoable by the person who made it.
+app.delete("/api/problems/:id/join-squad", (req, res) => {
+  const { id } = req.params;
+  const problem = problems.find(p => p.id === id);
+
+  if (!problem) {
+    return res.status(404).json({ success: false, error: "Problem not found" });
+  }
+
+  // The name to strip comes from the commitment record itself, so it matches
+  // whatever the join path stored ("Jos Innovator" here, "Jos Founder" via
+  // POST /vote with commit) instead of trusting the client to resend it.
+  const committedRecord = voteRecords.find(
+    r => r.kind === "squad" && r.targetId === problem.id && r.voterId === req.voterId
+  );
+  const founderName = committedRecord?.voterName
+    || (req.body?.name ? String(req.body.name).trim() : "Jos Innovator");
+
+  if (!retractVote("squad", problem.id, req.voterId)) {
+    return res.status(404).json({
+      success: false,
+      error: "not_committed",
+      message: `You are not in the squad for "${problem.title}".`,
+      problem,
+      problems,
+      myVotes: myVotesFor(req.voterId)
+    });
+  }
+
+  // Joining also casts the implied upvote, so leaving takes it back. Tolerant
+  // on purpose: the upvote may already have been withdrawn on its own.
+  retractVote("problem", problem.id, req.voterId);
+
+  // Only drop the name if nobody else in this squad is still using it.
+  const nameStillInSquad = voteRecords.some(
+    r => r.kind === "squad" && r.targetId === problem.id && r.voterName === founderName
+  );
+  if (!nameStillInSquad) {
+    problem.collaborators = problem.collaborators.filter(c => c !== founderName);
+  }
+
+  recomputeCounts();
+  relaxSquadStatus(problem);
+
+  broadcastStateUpdate("squad_left", `${founderName} left the action squad for "${problem.title}"`, founderName, problem.category);
   res.json({ success: true, problem, problems, myVotes: myVotesFor(req.voterId) });
 });
 

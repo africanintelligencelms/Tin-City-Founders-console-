@@ -28,7 +28,10 @@ import {
   Printer, 
   Share2,
   Tv,
-  CheckSquare
+  CheckSquare,
+  Trash2,
+  Loader2,
+  CircleDashed
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { TrusteeSeatDefinition, TrusteeCandidate, TrusteeTier, AttendeeProfile, MyVotes, ToastNotification } from '../types';
@@ -279,6 +282,57 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
       .then(res => (res.ok ? res.json() : null))
       .then(syncFromServer)
       .catch(err => console.error('Server flag update failed:', err));
+  };
+
+  // HOST ONLY. This grid lives inside the console (ProblemVoting), never the
+  // audience view, and the route is behind requireHost, so a call without the
+  // key comes back 403 rather than removing a nominee.
+  const [deletingCandidateId, setDeletingCandidateId] = useState<string | null>(null);
+
+  const handleDeleteCandidate = async (cand: TrusteeCandidate) => {
+    if (!window.confirm(`Remove ${cand.name} from Trustee Seat ${cand.seatNumber}?\n\nThis also removes their ${cand.votes} endorsement(s). It cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingCandidateId(cand.id);
+    try {
+      const res = await hostFetch(`/api/trustees/${encodeURIComponent(cand.id)}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => null);
+
+      if (res.ok) {
+        syncFromServer(data);
+        setCandidates(prev => prev.filter(c => c.id !== cand.id));
+        if (onNotify) {
+          onNotify({
+            type: 'info',
+            title: 'Nominee removed',
+            message: `${cand.name} is off Seat ${cand.seatNumber}.`,
+            duration: 3000
+          });
+        }
+        return;
+      }
+
+      // 409 = they are a live ballot option; 403 = no host key on this device.
+      const message = data?.message || data?.error || 'The server refused the delete.';
+      if (onNotify) {
+        onNotify({
+          type: 'info',
+          title: res.status === 409 ? 'Close the round first' : 'Could not remove',
+          message,
+          duration: 6000
+        });
+      } else {
+        window.alert(message);
+      }
+    } catch (err) {
+      console.error('Delete nominee failed:', err);
+      if (onNotify) {
+        onNotify({ type: 'info', title: 'Could not remove', message: 'Network error - the nominee is still on the seat.', duration: 5000 });
+      }
+    } finally {
+      setDeletingCandidateId(null);
+    }
   };
 
   // Open Nominate Modal for specific seat

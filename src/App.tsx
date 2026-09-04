@@ -666,13 +666,37 @@ export default function App() {
     const collaboratorName = name || currentProfile?.name || 'Jos Founder';
     const targetProblem = problems.find(p => p.id === id);
 
+    // Tapping a squad you are already in LEAVES it, exactly as tapping an
+    // upvote you already cast withdraws it. One mis-tap is not a life sentence.
     if (commit && alreadyCommitted) {
-      addToast({
-        type: 'info',
-        title: 'Already in this squad',
-        message: `You have already committed to "${targetProblem?.title || 'this problem'}".`,
-        duration: 3500
-      });
+      const updatedCommits = userCommittedIds.filter(c => c !== id);
+      setUserCommittedIds(updatedCommits);
+      try {
+        localStorage.setItem('tcf_user_commits', JSON.stringify(updatedCommits));
+      } catch (e) {}
+
+      try {
+        const res = await fetch(`/api/problems/${id}/join-squad`, { method: 'DELETE' });
+        const data = await res.json().catch(() => null);
+
+        // Whatever the verdict, sync to the server's truth
+        if (data?.myVotes) applyMyVotes(data.myVotes);
+        if (data?.problems && Array.isArray(data.problems)) setProblems(data.problems);
+
+        addToast({
+          type: 'info',
+          title: res.ok ? 'Left the squad' : 'Not in this squad',
+          message: res.ok
+            ? `You are no longer in the squad for "${targetProblem?.title || 'this problem'}".`
+            : (data?.message || 'This device is not in that squad.'),
+          duration: 3500
+        });
+      } catch (err) {
+        console.error('Server squad leave failed, updating locally:', err);
+        setProblems(prev => prev.map(p =>
+          p.id === id ? { ...p, commitments: Math.max(0, p.commitments - 1) } : p
+        ));
+      }
       return;
     }
 

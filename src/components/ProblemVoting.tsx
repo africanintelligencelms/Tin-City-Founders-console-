@@ -4,7 +4,7 @@ import {
   ThumbsUp, Users, Plus, Sparkles, MessageSquare, Search, Filter, 
   MapPin, Tag, CheckCircle2, Bot, ArrowUpRight, Send, Loader2, X, Flame, Lightbulb,
   Building2, ShieldAlert, Layers, Sprout, GraduationCap, ShoppingBag, Zap, FolderKanban,
-  BarChart2, Edit3, Trophy, ArrowRight, Scale
+  BarChart2, Edit3, Trophy, ArrowRight, Scale, Trash2
 } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
 import { SeamlessProblemWizard } from './SeamlessProblemWizard';
@@ -251,6 +251,56 @@ export const ProblemVoting: React.FC<ProblemVotingProps> = ({
   };
 
   // Assign category to problem
+  // HOST ONLY. This component is never rendered on an audience phone (App.tsx
+  // sends audience/unverified devices to AudienceParticipationView), and the
+  // route itself is behind requireHost, so a stray call without the key is a
+  // 403 rather than a deleted problem.
+  const [deletingProblemId, setDeletingProblemId] = useState<string | null>(null);
+
+  const handleDeleteProblem = async (prob: PlateauProblem) => {
+    if (!window.confirm(`Delete "${prob.title}" from the board?\n\nThis also removes its ${prob.upvotes} upvote(s) and ${prob.commitments} squad commitment(s). It cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingProblemId(prob.id);
+    try {
+      const res = await hostFetch(`/api/problems/${encodeURIComponent(prob.id)}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => null);
+
+      if (res.ok) {
+        // The server broadcasts a full snapshot; App re-renders this list from it.
+        if (onNotify) {
+          onNotify({
+            type: 'info',
+            title: 'Problem removed',
+            message: `"${prob.title}" is off the board.`,
+            duration: 3000
+          });
+        }
+        return;
+      }
+
+      // 409 = it is a live ballot option; 403 = this device holds no host key.
+      if (onNotify) {
+        onNotify({
+          type: 'info',
+          title: res.status === 409 ? 'Close the round first' : 'Could not delete',
+          message: data?.message || data?.error || 'The server refused the delete.',
+          duration: 6000
+        });
+      } else {
+        window.alert(data?.message || data?.error || 'The server refused the delete.');
+      }
+    } catch (err) {
+      console.error('Delete problem failed:', err);
+      if (onNotify) {
+        onNotify({ type: 'info', title: 'Could not delete', message: 'Network error - the problem is still on the board.', duration: 5000 });
+      }
+    } finally {
+      setDeletingProblemId(null);
+    }
+  };
+
   const handleAssignCategory = async (problemId: string, newCategoryName: string) => {
     await onUpdateProblemCategory(problemId, newCategoryName);
     setAssigningCategoryProblemId(null);
@@ -794,6 +844,21 @@ export const ProblemVoting: React.FC<ProblemVotingProps> = ({
                         >
                           <MessageSquare className="w-3.5 h-3.5 text-[#0D4734]" />
                           <span>{prob.comments.length}</span>
+                        </button>
+
+                        {/* Host-only: remove a duplicate / test / joke entry. */}
+                        <button
+                          onClick={() => handleDeleteProblem(prob)}
+                          disabled={deletingProblemId === prob.id}
+                          className="px-3 py-2 rounded-xl bg-white hover:bg-red-50 text-red-700 border border-red-300/70 hover:border-red-400 transition-all duration-150 text-xs font-display font-bold flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Host: delete this problem from the board"
+                        >
+                          {deletingProblemId === prob.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3.5 h-3.5" />
+                          )}
+                          <span className="sr-only">Delete problem</span>
                         </button>
                       </div>
                     </div>
