@@ -20,8 +20,10 @@ services:
     # devDependencies, and vite + the build toolchain live there.
     buildCommand: npm install --include=dev && npm run build
     startCommand: npm start
-    # Cheap endpoint; keeps the service warm and lets Render see it is alive.
-    healthCheckPath: /api/live/sync
+    # NO healthCheckPath on purpose. A failing check makes Render route traffic
+    # away from the instance, which surfaces as intermittent 404s with
+    # "x-render-routing: no-server" even though the app is healthy. Render
+    # already detects liveness from the bound port.
     envVars:
       - key: NODE_ENV
         value: production
