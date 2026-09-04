@@ -219,7 +219,7 @@ export default function App() {
     setRoomSessionState(prev => ({ ...prev, activeRound: round ?? null }));
   };
 
-  const handleOpenRound = async (opts: { kind: RoundKind; title: string; maxSelections: number }) => {
+  const handleOpenRound = async (opts: { kind: RoundKind; title: string; maxSelections: number; optionIds?: string[] }) => {
     const data = await postRound('/api/round/open', 'POST', opts);
     applyRound(data.round);
     // A fresh round means this device has not voted yet.
@@ -1094,6 +1094,10 @@ export default function App() {
               onCloseRound={handleCloseRound}
               onClearRound={handleClearRound}
               onDownloadBackup={handleDownloadBackup}
+              problems={problems}
+              categories={liveCategories}
+              trusteeCandidates={trusteeCandidates}
+              lastRound={lastRound}
             />
           </div>
 
