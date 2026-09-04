@@ -156,12 +156,22 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
   // new button cannot accidentally bypass whichever lock governs it.
   const phase = sessionState.activePhase;
 
-  // Upvotes, squad joins, sector votes and trustee endorsements: round-only.
+  // Upvotes, sector votes and trustee endorsements: round-only.
   const votingLocked = readOnly;
 
   // Contribution: open in the phase that calls for it, plus free roam.
   const canSubmitProblem = !readOnly || phase === 'problem_pitch' || phase === 'free_roam';
   const canNominateTrustee = !readOnly || phase === 'trustee_election' || phase === 'free_roam';
+  // Squad joining is a commitment, not a ballot: forming squads IS the point of
+  // the squad_commit phase, so it cannot be locked behind a voting round.
+  const canJoinSquad = !readOnly || phase === 'squad_commit' || phase === 'free_roam';
+
+  // What the "floor is open" banner is allowed to promise, in run-of-show order.
+  const openFloorActions = [
+    canSubmitProblem && 'submit a Plateau problem',
+    canJoinSquad && 'join an action squad',
+    canNominateTrustee && 'nominate a founding trustee'
+  ].filter(Boolean) as string[];
 
   const blockedByRound = () => {
     sounds.playTapSound();
@@ -186,6 +196,14 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
   const guardedVoteProblem = (id: string, commit: boolean, name?: string) => {
     if (votingLocked) return blockedByRound();
     onVoteProblem(id, commit, name);
+  };
+
+  // Squad commit/leave has its own gate. Kept separate from guardedVoteProblem
+  // on purpose: that one function serves both the plain upvote (round-only) and
+  // the commit path, and only the commit path follows canJoinSquad.
+  const guardedJoinSquad = (id: string, name?: string) => {
+    if (!canJoinSquad) return blockedForPhase('Squad joining');
+    onVoteProblem(id, true, name);
   };
 
   const guardedVoteCategory = (categoryName: string) => {
@@ -391,7 +409,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
         {/* Status notice. Voting is always host-led outside a round, but the
             banner must be honest about what the floor CAN do in this phase. */}
         {readOnly && (
-          canSubmitProblem || canNominateTrustee ? (
+          openFloorActions.length > 0 ? (
             <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-600/30 flex items-start gap-2.5">
               <Megaphone className="w-4 h-4 text-[#0D4734] shrink-0 mt-0.5" />
               <div className="min-w-0">
@@ -400,9 +418,12 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                 </div>
                 <p className="text-xs text-stone-700 mt-0.5">
                   You can{' '}
-                  {canSubmitProblem && <strong>submit a Plateau problem</strong>}
-                  {canSubmitProblem && canNominateTrustee && ' and '}
-                  {canNominateTrustee && <strong>nominate a founding trustee</strong>}
+                  {openFloorActions.map((action, i) => (
+                    <React.Fragment key={action}>
+                      {i > 0 && (i === openFloorActions.length - 1 ? ' and ' : ', ')}
+                      <strong>{action}</strong>
+                    </React.Fragment>
+                  ))}
                   {' '}right now. Voting still happens inside a host-opened round — the ballot
                   takes over your screen when it opens.
                 </p>
@@ -632,8 +653,8 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                   </button>
 
                   <button
-                    onClick={() => guardedVoteProblem(currentPitchProblem.id, true)}
-                    disabled={votingLocked}
+                    onClick={() => guardedJoinSquad(currentPitchProblem.id)}
+                    disabled={!canJoinSquad}
                     className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit py-2.5 rounded-xl text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
                       myVotes.squads.includes(currentPitchProblem.id)
                         ? 'bg-amber-500 text-stone-950 shadow-sm'
@@ -788,8 +809,8 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                       </button>
 
                       <button
-                        onClick={() => guardedVoteProblem(prob.id, true)}
-                        disabled={votingLocked}
+                        onClick={() => guardedJoinSquad(prob.id)}
+                        disabled={!canJoinSquad}
                         className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit py-2 px-3 rounded-xl text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
                           hasCommitted
                             ? 'bg-amber-500 text-stone-950 font-black shadow-xs'
