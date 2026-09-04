@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Radio, Megaphone, Send, Lock, Unlock, QrCode, Copy, Check, Users, 
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Radio, Megaphone, Send, Lock, Unlock, QrCode, Copy, Check, Users,
   Sparkles, Vote, Award, Handshake, Compass, ChevronDown, ChevronUp,
   X, AlertCircle, PlayCircle, ExternalLink, Square, Trophy, Loader2, Download
 } from 'lucide-react';
-import { RoomPhase, RoomSessionState, ToastNotification, RoundKind } from '../types';
+import {
+  RoomPhase, RoomSessionState, ToastNotification, RoundKind,
+  PlateauProblem, CategoryInfo, TrusteeCandidate, VotingRound, RoundOption
+} from '../types';
 import { sounds } from '../utils/soundEffects';
 
 interface StageConductorBarProps {
@@ -16,11 +19,18 @@ interface StageConductorBarProps {
   onOpenQRModal?: () => void;
   isCompact?: boolean;
   // Round lifecycle — the host picks the ballot type each round.
-  onOpenRound?: (opts: { kind: RoundKind; title: string; maxSelections: number }) => Promise<void>;
+  onOpenRound?: (opts: { kind: RoundKind; title: string; maxSelections: number; optionIds?: string[] }) => Promise<void>;
   onCloseRound?: () => Promise<void>;
   onClearRound?: () => Promise<void>;
   // Pulls the whole room down as a JSON file the host can restore from.
   onDownloadBackup?: () => Promise<void>;
+  // The three candidate pools, so the host can put a shortlist on the ballot
+  // instead of everything. Mirrors buildRoundOptions() on the server.
+  problems?: PlateauProblem[];
+  categories?: CategoryInfo[];
+  trusteeCandidates?: TrusteeCandidate[];
+  // Most recently archived round — powers the "Top 3 from last round" shortcut.
+  lastRound?: VotingRound | null;
 }
 
 const PHASES: Array<{
@@ -99,7 +109,11 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
   onOpenRound,
   onCloseRound,
   onClearRound,
-  onDownloadBackup
+  onDownloadBackup,
+  problems = [],
+  categories = [],
+  trusteeCandidates = [],
+  lastRound = null
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(!isCompact);
   const [isBroadcastOpen, setIsBroadcastOpen] = useState<boolean>(false);
@@ -111,6 +125,10 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
   const [roundKind, setRoundKind] = useState<RoundKind>('problem');
   const [roundTitle, setRoundTitle] = useState<string>('');
   const [roundPicks, setRoundPicks] = useState<number>(1);
+  // Stored as EXCLUSIONS, not selections: an empty set means "everything is on
+  // the ballot", so the default matches the old behaviour and anything that
+  // arrives mid-setup (a late problem, a fresh nomination) is included too.
+  const [excludedOptionIds, setExcludedOptionIds] = useState<string[]>([]);
   const [isRoundBusy, setIsRoundBusy] = useState<boolean>(false);
   const [isBackupBusy, setIsBackupBusy] = useState<boolean>(false);
 
@@ -159,17 +177,67 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionState.activePhase, activeRound?.id]);
 
+  // The pool the server would build for this kind (see buildRoundOptions in server.ts).
+  const availableOptions: RoundOption[] = useMemo(() => {
+    if (roundKind === 'problem') {
+      return problems.map(p => ({ id: p.id, label: p.title, sublabel: p.category }));
+    }
+    if (roundKind === 'category') {
+      return categories.map(c => ({ id: c.name, label: c.name, sublabel: c.description }));
+    }
+    return trusteeCandidates.map(c => ({ id: c.id, label: c.name, sublabel: c.titleOrOrg }));
+  }, [roundKind, problems, categories, trusteeCandidates]);
+
+  const excludedSet = useMemo(() => new Set(excludedOptionIds), [excludedOptionIds]);
+  const selectedOptionIds = useMemo(
+    () => availableOptions.map(o => o.id).filter(id => !excludedSet.has(id)),
+    [availableOptions, excludedSet]
+  );
+
+  // Switching the ballot type starts a fresh, everything-selected shortlist.
+  useEffect(() => {
+    setExcludedOptionIds([]);
+  }, [roundKind]);
+
+  const toggleOption = (id: string) => {
+    setExcludedOptionIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+  const selectAllOptions = () => { sounds.playTapSound(); setExcludedOptionIds([]); };
+  const selectNoOptions = () => { sounds.playTapSound(); setExcludedOptionIds(availableOptions.map(o => o.id)); };
+
+  // Results come back sorted highest-first, so the top 3 are just the first 3
+  // that still exist in the current pool.
+  const topThreeIds = useMemo(() => {
+    if (!lastRound || lastRound.kind !== roundKind || !Array.isArray(lastRound.results)) return [];
+    const live = new Set(availableOptions.map(o => o.id));
+    return lastRound.results.map(r => r.optionId).filter(id => live.has(id)).slice(0, 3);
+  }, [lastRound, roundKind, availableOptions]);
+
+  const canUseTopThree = topThreeIds.length >= 2;
+
+  const selectTopThree = () => {
+    if (!canUseTopThree) return;
+    sounds.playTapSound();
+    const keep = new Set(topThreeIds);
+    setExcludedOptionIds(availableOptions.map(o => o.id).filter(id => !keep.has(id)));
+  };
+
   const handleOpenRound = async () => {
+    if (selectedOptionIds.length < 2) return;
     sounds.playTapSound();
     const kindLabel = ROUND_KINDS.find(k => k.id === roundKind)?.label || roundKind;
+    const isEverything = selectedOptionIds.length === availableOptions.length;
     await runRoundAction(() =>
       onOpenRound!({
         kind: roundKind,
         title: roundTitle.trim() || `Live ${kindLabel} vote`,
-        maxSelections: Math.max(1, roundPicks)
+        maxSelections: Math.max(1, roundPicks),
+        // Omitting the field is how the server reads "the whole pool".
+        ...(isEverything ? {} : { optionIds: selectedOptionIds })
       })
     );
     setRoundTitle('');
+    setExcludedOptionIds([]);
   };
 
   // Audience Link (points directly to audience remote mode)
@@ -484,12 +552,90 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
 
                       <button
                         onClick={handleOpenRound}
-                        disabled={isRoundBusy || !onOpenRound}
+                        disabled={isRoundBusy || !onOpenRound || selectedOptionIds.length < 2}
                         className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:bg-white/10 disabled:text-white/40 text-[#071912] text-xs font-display font-black transition cursor-pointer disabled:cursor-not-allowed active:scale-95"
                       >
                         {isRoundBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Vote className="w-4 h-4" />}
                         Open Round
                       </button>
+                    </div>
+
+                    {/* ---- What goes on the ballot (all ticked by default) ---- */}
+                    <div className="mt-2 rounded-xl bg-[#09251B]/60 border border-emerald-800/40 p-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                        <span className="text-[11px] font-mono tracking-wider uppercase text-emerald-300 font-bold">
+                          On the ballot: {selectedOptionIds.length} of {availableOptions.length}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={selectAllOptions}
+                            className="px-2.5 py-1 rounded-lg border border-emerald-800/50 bg-[#09251B]/80 text-white/75 hover:text-white hover:border-emerald-600 text-[11px] font-display font-bold transition cursor-pointer"
+                          >
+                            All
+                          </button>
+                          <button
+                            onClick={selectNoOptions}
+                            className="px-2.5 py-1 rounded-lg border border-emerald-800/50 bg-[#09251B]/80 text-white/75 hover:text-white hover:border-emerald-600 text-[11px] font-display font-bold transition cursor-pointer"
+                          >
+                            None
+                          </button>
+                          <button
+                            onClick={selectTopThree}
+                            disabled={!canUseTopThree}
+                            title={
+                              canUseTopThree
+                                ? `Shortlist the top scorers from "${lastRound?.title}"`
+                                : 'No closed round of this type to shortlist from yet'
+                            }
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-400/50 bg-amber-400/15 text-amber-200 hover:bg-amber-400/25 disabled:opacity-35 disabled:cursor-not-allowed text-[11px] font-display font-bold transition cursor-pointer"
+                          >
+                            <Trophy className="w-3 h-3" />
+                            Top 3 from last round
+                          </button>
+                        </div>
+                      </div>
+
+                      {availableOptions.length === 0 ? (
+                        <div className="text-[11px] text-white/50 py-1">
+                          Nothing to put on this ballot yet.
+                        </div>
+                      ) : (
+                        <div className="max-h-40 overflow-y-auto pr-1 space-y-0.5">
+                          {availableOptions.map(o => {
+                            const checked = !excludedSet.has(o.id);
+                            return (
+                              <label
+                                key={o.id}
+                                className="flex items-start gap-2 px-2 py-1.5 rounded-lg hover:bg-white/5 cursor-pointer"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleOption(o.id)}
+                                  className="mt-0.5 w-3.5 h-3.5 shrink-0 accent-emerald-400 cursor-pointer"
+                                />
+                                <span className="min-w-0">
+                                  <span className={`block text-[11px] font-bold leading-tight truncate ${checked ? 'text-white' : 'text-white/40'}`}>
+                                    {o.label}
+                                  </span>
+                                  {o.sublabel && (
+                                    <span className="block text-[10px] text-white/40 leading-tight truncate">
+                                      {o.sublabel}
+                                    </span>
+                                  )}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {selectedOptionIds.length < 2 && (
+                        <div className="flex items-center gap-1.5 mt-2 text-[11px] text-amber-300 font-medium">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                          Tick at least 2 options — a round needs two things to choose between.
+                        </div>
+                      )}
                     </div>
                   </>
                 )}
