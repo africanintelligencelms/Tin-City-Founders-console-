@@ -2,7 +2,6 @@ import "dotenv/config";
 import express, { Response } from "express";
 import path from "path";
 import fs from "fs";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
 
@@ -60,6 +59,32 @@ app.use((req, res, next) => {
   }
   req.voterId = voterId;
   next();
+});
+
+// -------------------------------------------------------------
+// Host authentication (shared key)
+// -------------------------------------------------------------
+// HOST_KEY is a shared secret handed only to whoever runs the stage console.
+// When it is unset the gate is a no-op, so local dev and CI behave exactly as
+// before. In production (public URL) it must be set, otherwise any attendee who
+// strips ?mode=audience — or anyone with curl — can close rounds, broadcast to
+// every phone in the room, or burn the Gemini key.
+const HOST_KEY = process.env.HOST_KEY || "";
+
+function hasHostKey(req: express.Request): boolean {
+  if (!HOST_KEY) return true;
+  const provided = req.headers["x-tcf-host"];
+  return typeof provided === "string" && provided === HOST_KEY;
+}
+
+function requireHost(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (hasHostKey(req)) return next();
+  return res.status(403).json({ success: false, error: "Host key required." });
+}
+
+// Lets the client decide whether to render the console. Never echoes the key.
+app.get("/api/host/verify", (req, res) => {
+  res.json({ success: true, ok: hasHostKey(req) });
 });
 
 // Persistent State Storage File Path
@@ -525,6 +550,26 @@ let categoriesStore = SEED_ROOM ? { ...defaultCategoriesStore } : emptyCategorie
 let trusteeCandidates: ServerTrustee[] = SEED_ROOM ? [...defaultTrusteeCandidates] : [];
 
 // -------------------------------------------------------------
+// Public view of a trustee record
+// -------------------------------------------------------------
+// phoneOrContact is typed into the nomination form by whoever is at the
+// microphone — it is a real person's phone number, and the room runs on a
+// public URL. It stays in memory and in .data/room_state.json (the host needs
+// it to actually call the nominee), but it is stripped out of everything an
+// unauthenticated client can reach: /api/live/sync, /api/trustees, the SSE
+// INIT_SYNC + STATE_UPDATE packets, and the open nominate/endorse responses.
+// The host reads contacts through the host-gated GET /api/admin/trustees and
+// the GET /api/admin/state export, both behind requireHost.
+function publicTrustee(candidate: ServerTrustee) {
+  const { phoneOrContact, ...rest } = candidate as ServerTrustee & { phoneOrContact?: string };
+  return rest;
+}
+
+function publicTrustees() {
+  return trusteeCandidates.map(publicTrustee);
+}
+
+// -------------------------------------------------------------
 // Vote Integrity: one vote per voter (tcf_vid) per target
 // -------------------------------------------------------------
 type VoteKind = "problem" | "squad" | "category" | "trustee";
@@ -755,6 +800,28 @@ try {
     if (parsed.roundBallots && Array.isArray(parsed.roundBallots)) roundBallots = parsed.roundBallots;
     if (parsed.roundHistory && Array.isArray(parsed.roundHistory)) roundHistory = parsed.roundHistory;
     if (parsed.activeRound && typeof parsed.activeRound === "object") activeRound = parsed.activeRound;
+
+    // A round that was mid-reveal when the process died must not come back as a
+    // reveal. The reveal timer only ever lived in memory, so nothing would ever
+    // clear it again and every phone in the room would be pinned to a stale
+    // results screen until the host tapped "Back to Room" by hand. The reveal
+    // window has almost certainly elapsed during the restart anyway, so the
+    // round goes straight into history. Archived inline rather than through
+    // archiveActiveRound() because the SSE client set is not constructed yet at
+    // this point in module evaluation (and there is nobody connected to tell).
+    if (activeRound && activeRound.status === "revealed") {
+      const staleId = activeRound.id;
+      roundHistory.unshift(activeRound);
+      if (roundHistory.length > 20) roundHistory.length = 20;
+      roundBallots = roundBallots.filter(b => b.roundId !== staleId);
+      activeRound = null;
+      console.log(`Archived a round that was mid-reveal when the server restarted (${staleId}).`);
+      // Write it back now so the on-disk copy matches memory even if nothing
+      // else mutates the room before the next restart. Safe here: persistState
+      // is a hoisted declaration and only touches values already initialised.
+      persistState();
+    }
+
     // A round that survived a restart is re-attached to the session state below.
     roomSessionState.activeRound = activeRound;
     console.log(`Loaded room state from disk cache (${voteRecords.length} vote records).`);
@@ -767,22 +834,29 @@ migrateBaseCounts();
 rebuildCastVotes();
 recomputeCounts();
 
+// The one definition of "the room, as a file". persistState() writes exactly
+// this, and GET /api/admin/state hands back exactly this, so a downloaded
+// backup is drop-in compatible with .data/room_state.json.
+function buildStateSnapshot() {
+  return {
+    problems,
+    attendees,
+    categoriesStore,
+    trusteeCandidates,
+    activityLogs,
+    voteRecords,
+    roomSessionState,
+    activeRound,
+    roundBallots,
+    roundHistory,
+    lastSaved: Date.now()
+  };
+}
+
 // Helper to save state to disk
 function persistState() {
   try {
-    const state = {
-      problems,
-      attendees,
-      categoriesStore,
-      trusteeCandidates,
-      activityLogs,
-      voteRecords,
-      roomSessionState,
-      activeRound,
-      roundBallots,
-      roundHistory,
-      lastSaved: Date.now()
-    };
+    const state = buildStateSnapshot();
     // Atomic write: a crash mid-write can never leave a truncated state file behind.
     const tmpFile = `${STATE_FILE}.${process.pid}.tmp`;
     fs.writeFileSync(tmpFile, JSON.stringify(state, null, 2), "utf-8");
@@ -837,7 +911,7 @@ function broadcastStateUpdate(actionType: string, summary: string, author = "Roo
       iconName: data.iconName,
       problemCount: problems.filter(p => p.category === name).length
     })),
-    trusteeCandidates,
+    trusteeCandidates: publicTrustees(),
     activityLogs,
     sessionState: roomSessionState,
     telemetry: {
@@ -874,7 +948,7 @@ app.get("/api/live/stream", (req, res) => {
       iconName: data.iconName,
       problemCount: problems.filter(p => p.category === name).length
     })),
-    trusteeCandidates,
+    trusteeCandidates: publicTrustees(),
     activityLogs,
     sessionState: roomSessionState,
     telemetry: {
@@ -926,7 +1000,7 @@ app.get("/api/live/sync", (_req, res) => {
       iconName: data.iconName,
       problemCount: problems.filter(p => p.category === name).length
     })),
-    trusteeCandidates,
+    trusteeCandidates: publicTrustees(),
     activityLogs,
     sessionState: roomSessionState,
     telemetry: {
@@ -949,7 +1023,7 @@ app.get("/api/session/state", (_req, res) => {
 });
 
 // Host Conductor updates room stage (instantly directs all audience screens)
-app.post("/api/session/state", (req, res) => {
+app.post("/api/session/state", requireHost, (req, res) => {
   const { activePhase, phaseTitle, allowAudienceNavigation, pinnedProblemId } = req.body || {};
 
   if (activePhase) {
@@ -985,7 +1059,7 @@ app.post("/api/session/state", (req, res) => {
 });
 
 // Host Conductor broadcasts an instant alert banner to audience screens
-app.post("/api/session/broadcast", (req, res) => {
+app.post("/api/session/broadcast", requireHost, (req, res) => {
   const { message, author, durationMs } = req.body || {};
   if (!message || typeof message !== "string") {
     return res.status(400).json({ success: false, error: "Broadcast message is required" });
@@ -1019,7 +1093,7 @@ app.post("/api/session/broadcast", (req, res) => {
 });
 
 // Dismiss announcement
-app.delete("/api/session/broadcast", (_req, res) => {
+app.delete("/api/session/broadcast", requireHost, (_req, res) => {
   roomSessionState.announcement = null;
   roomSessionState.updatedAt = Date.now();
   persistState();
@@ -1044,10 +1118,38 @@ app.post("/api/session/react", (req, res) => {
   res.json({ success: true, reaction });
 });
 
+// ----------------- HOST FAILSAFE: STATE EXPORT -----------------
+
+// The whole room as a file, for a host who needs to move it. On a platform with
+// no persistent disk (Render free tier) a restart wipes the room; this is the
+// only way to carry the evening onto the backup laptop. The response body is
+// byte-for-byte what persistState() writes, so the download can be dropped in
+// as .data/room_state.json and the laptop picks up exactly where the cloud
+// stopped. Host-gated: the file carries every attendee record in the room.
+app.get("/api/admin/state", requireHost, (_req, res) => {
+  const snapshot = buildStateSnapshot();
+  // 2026-09-04T15-30-00 — colons are illegal in filenames on Windows.
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="room_state-${stamp}.json"`);
+  res.setHeader("Cache-Control", "no-store");
+  res.send(JSON.stringify(snapshot, null, 2));
+});
+
+// The trustee list WITH phoneOrContact, for the console only. The public
+// payloads strip contacts (see publicTrustee), so this is how the host reads
+// back a number they need to ring after the room empties.
+app.get("/api/admin/trustees", requireHost, (_req, res) => {
+  res.json({ success: true, candidates: trusteeCandidates });
+});
+
 // ----------------- VOTING ROUND ENDPOINTS -----------------
 
 const ROUND_KINDS: RoundKind[] = ["problem", "category", "trustee"];
-const DEFAULT_REVEAL_MS = 30000;
+// Three minutes, not thirty seconds. On venue wifi a phone that locks or drops
+// during the reveal needs a wide window to come back and still see the result
+// on its own screen; the host can always cut it short with "Back to Room".
+const DEFAULT_REVEAL_MS = 180000;
 
 // Build the candidate pool for a ballot kind. optionIds narrows it; empty means "everything".
 function buildRoundOptions(kind: RoundKind, optionIds?: string[]): RoundOption[] {
@@ -1111,19 +1213,32 @@ app.get("/api/round", (req, res) => {
 });
 
 // Host opens a round. The host picks the ballot type per round.
-app.post("/api/round/open", (req, res) => {
+app.post("/api/round/open", requireHost, (req, res) => {
   const { kind, title, prompt, optionIds, maxSelections } = req.body || {};
+
+  // A live round must be closed deliberately by the host. Nothing here ends it.
+  if (activeRound && activeRound.status === "open") {
+    return res.status(409).json({
+      success: false,
+      error: "A round is already open. Close it first.",
+      round: activeRound
+    });
+  }
 
   if (!ROUND_KINDS.includes(kind)) {
     return res.status(400).json({ success: false, error: `kind must be one of: ${ROUND_KINDS.join(", ")}` });
   }
-  if (activeRound && activeRound.status === "open") {
-    return res.status(409).json({ success: false, error: "A round is already open. Close it first.", round: activeRound });
-  }
-
   const options = buildRoundOptions(kind, optionIds);
   if (options.length < 2) {
     return res.status(400).json({ success: false, error: "A round needs at least 2 options on the ballot." });
+  }
+
+  // A revealed round has already been tallied at close, so it just steps aside
+  // into history — results intact — to make room for the new one. An OPEN round
+  // never does: it is a live vote, and a stray double-tap, a second host device
+  // or a direct API call must not end it out from under the room.
+  if (activeRound) {
+    archiveActiveRound();
   }
 
   if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
@@ -1205,7 +1320,7 @@ app.post("/api/round/vote", (req, res) => {
 });
 
 // Host closes the round: tally, reveal, and schedule the return to idle.
-app.post("/api/round/close", (req, res) => {
+app.post("/api/round/close", requireHost, (req, res) => {
   if (!activeRound) {
     return res.status(409).json({ success: false, error: "There is no round to close." });
   }
@@ -1244,6 +1359,7 @@ app.post("/api/round/close", (req, res) => {
 
 function archiveActiveRound() {
   if (!activeRound) return;
+  const archived = activeRound;
   roundHistory.unshift(activeRound);
   if (roundHistory.length > 20) roundHistory.length = 20;
   const clearedId = activeRound.id;
@@ -1256,11 +1372,13 @@ function archiveActiveRound() {
   if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
   syncRoundToSession();
   persistState();
-  broadcastSSE("ROUND_CLEARED", { roundId: clearedId });
+  // The archived round rides along so a phone can keep showing "last round
+  // result" on the idle screen instead of the round simply vanishing.
+  broadcastSSE("ROUND_CLEARED", { roundId: clearedId, round: archived });
 }
 
 // Host dismisses the results early and sends every phone back to the room view.
-app.delete("/api/round", (_req, res) => {
+app.delete("/api/round", requireHost, (_req, res) => {
   if (!activeRound) {
     return res.json({ success: true, round: null });
   }
@@ -1281,7 +1399,7 @@ app.get("/api/votes/mine", (req, res) => {
 app.get("/api/trustees", (_req, res) => {
   res.json({
     success: true,
-    candidates: trusteeCandidates
+    candidates: publicTrustees()
   });
 });
 
@@ -1356,7 +1474,7 @@ app.post("/api/trustees/nominate", (req, res) => {
   recomputeCounts();
 
   broadcastStateUpdate("trustee_nominated", `Nominated ${newCandidate.name} for Seat ${newCandidate.seatNumber}`, newCandidate.nominatedBy);
-  res.json({ success: true, candidate: newCandidate, candidates: trusteeCandidates, myVotes: myVotesFor(req.voterId) });
+  res.json({ success: true, candidate: publicTrustee(newCandidate), candidates: publicTrustees(), myVotes: myVotesFor(req.voterId) });
 });
 
 // Vote / Endorse a trustee candidate
@@ -1374,15 +1492,15 @@ app.post("/api/trustees/:id/vote", (req, res) => {
       success: false,
       error: "already_voted",
       message: `You have already endorsed ${candidate.name}.`,
-      candidate,
-      candidates: trusteeCandidates,
+      candidate: publicTrustee(candidate),
+      candidates: publicTrustees(),
       myVotes: myVotesFor(req.voterId)
     });
   }
   recomputeCounts();
 
   broadcastStateUpdate("trustee_voted", `Endorsed ${candidate.name} for Trustee Seat ${candidate.seatNumber}`, voterName || "Founder");
-  res.json({ success: true, candidate, candidates: trusteeCandidates, myVotes: myVotesFor(req.voterId) });
+  res.json({ success: true, candidate: publicTrustee(candidate), candidates: publicTrustees(), myVotes: myVotesFor(req.voterId) });
 });
 
 // Withdraw an endorsement
@@ -1405,11 +1523,11 @@ app.delete("/api/trustees/:id/vote", (req, res) => {
   recomputeCounts();
 
   broadcastStateUpdate("trustee_vote_withdrawn", `An endorsement for ${candidate.name} (Seat ${candidate.seatNumber}) was withdrawn`);
-  res.json({ success: true, candidate, candidates: trusteeCandidates, myVotes: myVotesFor(req.voterId) });
+  res.json({ success: true, candidate: publicTrustee(candidate), candidates: publicTrustees(), myVotes: myVotesFor(req.voterId) });
 });
 
 // Update trustee R-N-T scores and flags
-app.post("/api/trustees/:id/score", (req, res) => {
+app.post("/api/trustees/:id/score", requireHost, (req, res) => {
   const { id } = req.params;
   const { scoreR, scoreN, scoreT, reachable, confirmed, notes } = req.body;
   const candidate = trusteeCandidates.find(c => c.id === id);
@@ -1469,7 +1587,7 @@ app.post(["/api/attendees", "/api/attendees/checkin"], (req, res) => {
 });
 
 // Remove attendee
-app.delete("/api/attendees/:id", (req, res) => {
+app.delete("/api/attendees/:id", requireHost, (req, res) => {
   const { id } = req.params;
   const removed = attendees.find(a => a.id === id);
   attendees = attendees.filter(a => a.id !== id);
@@ -1778,7 +1896,7 @@ app.post("/api/problems/:id/comments", (req, res) => {
 });
 
 // Gemini AI Action Plan Generator for Plateau Problems
-app.post("/api/generate-solution-plan", async (req, res) => {
+app.post("/api/generate-solution-plan", requireHost, async (req, res) => {
   try {
     const { problemTitle, problemDescription, category } = req.body;
     const apiKey = process.env.GEMINI_API_KEY;
@@ -1837,6 +1955,8 @@ Return ONLY valid JSON format.`;
 // -------------------------------------------------------------
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    // Loaded lazily so the production image never needs vite installed at all.
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

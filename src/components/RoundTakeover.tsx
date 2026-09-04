@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Vote, CheckCircle2, Trophy, Radio, Loader2, Users, AlertCircle } from 'lucide-react';
+import { Vote, CheckCircle2, Trophy, Radio, Loader2, Users, AlertCircle, RefreshCw } from 'lucide-react';
 import { VotingRound, MyRoundBallot } from '../types';
 
 interface RoundTakeoverProps {
@@ -7,6 +7,10 @@ interface RoundTakeoverProps {
   myBallot: MyRoundBallot;
   onSubmitBallot: (selections: string[]) => Promise<void> | void;
   voterName?: string;
+  syncStatus?: 'connected' | 'connecting' | 'reconnecting' | 'offline';
+  // Tapping the pill forces a full resync — the escape hatch for a phone that
+  // was locked mid-round and came back to a stale ballot.
+  onReconnect?: () => void;
 }
 
 const KIND_LABEL: Record<VotingRound['kind'], string> = {
@@ -19,7 +23,9 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
   round,
   myBallot,
   onSubmitBallot,
-  voterName
+  voterName,
+  syncStatus = 'connected',
+  onReconnect
 }) => {
   const [selections, setSelections] = useState<string[]>(myBallot.selections || []);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -60,6 +66,35 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
     }
   };
 
+  // Small, quiet connection pill — same language as the idle screen's. It only
+  // asks to be tapped when the link is actually down.
+  const isLive = syncStatus === 'connected';
+  const ConnectionPill = () => (
+    <button
+      type="button"
+      onClick={() => { if (!isLive && onReconnect) onReconnect(); }}
+      disabled={isLive || !onReconnect}
+      title={isLive ? 'Live with the room' : 'Tap to resync with the room'}
+      className={`flex items-center gap-1.5 text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-1 rounded-full border transition ${
+        isLive
+          ? 'border-emerald-400/25 text-emerald-300/70 cursor-default'
+          : 'border-amber-400/40 bg-amber-400/10 text-amber-200 hover:bg-amber-400/20 cursor-pointer active:scale-95'
+      }`}
+    >
+      {isLive ? (
+        <>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          Live
+        </>
+      ) : (
+        <>
+          <RefreshCw size={10} className={syncStatus === 'offline' ? '' : 'animate-spin'} />
+          {syncStatus === 'offline' ? 'Offline · tap to retry' : 'Reconnecting · tap to resync'}
+        </>
+      )}
+    </button>
+  );
+
   const winner = useMemo(() => round.results?.[0], [round.results]);
   const maxVotes = useMemo(
     () => Math.max(1, ...(round.results || []).map(r => r.votes)),
@@ -71,9 +106,12 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
     return (
       <div className="min-h-screen bg-[#071912] text-[#FAF6EE] px-4 py-6">
         <div className="max-w-lg mx-auto">
-          <div className="flex items-center gap-2 text-amber-300 text-xs font-mono font-bold uppercase tracking-wider mb-2">
-            <Trophy size={14} />
-            Results In
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="flex items-center gap-2 text-amber-300 text-xs font-mono font-bold uppercase tracking-wider">
+              <Trophy size={14} />
+              Results In
+            </div>
+            <ConnectionPill />
           </div>
           <h1 className="text-2xl font-display font-bold leading-tight mb-1">{round.title}</h1>
           <p className="text-white/50 text-sm mb-6">
@@ -136,12 +174,15 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
   return (
     <div className="min-h-screen bg-[#071912] text-[#FAF6EE] px-4 py-6 pb-32">
       <div className="max-w-lg mx-auto">
-        <div className="flex items-center gap-2 text-emerald-300 text-xs font-mono font-bold uppercase tracking-wider mb-2">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
-          </span>
-          Round Open · {KIND_LABEL[round.kind]}
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2 text-emerald-300 text-xs font-mono font-bold uppercase tracking-wider">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+            </span>
+            Round Open · {KIND_LABEL[round.kind]}
+          </div>
+          <ConnectionPill />
         </div>
 
         <h1 className="text-2xl font-display font-bold leading-tight mb-1">{round.title}</h1>
@@ -220,6 +261,8 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
           >
             {isSubmitting ? (
               <><Loader2 size={16} className="animate-spin" /> Submitting…</>
+            ) : error ? (
+              <><RefreshCw size={16} /> Try again</>
             ) : alreadyVoted ? (
               <><Vote size={16} /> Update my ballot</>
             ) : (
@@ -227,7 +270,11 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
             )}
           </button>
           <p className="text-center text-white/30 text-[11px] mt-2 flex items-center justify-center gap-1">
-            <Radio size={10} /> Live · one ballot per device
+            {error ? (
+              <>Sending it again is safe — one ballot per device.</>
+            ) : (
+              <><Radio size={10} /> Live · one ballot per device</>
+            )}
           </p>
         </div>
       </div>

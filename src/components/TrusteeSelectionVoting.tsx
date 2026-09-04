@@ -35,6 +35,7 @@ import { TrusteeSeatDefinition, TrusteeCandidate, TrusteeTier, AttendeeProfile, 
 import { TRUSTEE_SEATS, INITIAL_TRUSTEE_CANDIDATES } from '../data/trusteeSeatsData';
 import { useVotingAnimation } from './VotingParticleManager';
 import { sounds } from '../utils/soundEffects';
+import { hostFetch } from '../utils/hostKey';
 
 interface TrusteeSelectionVotingProps {
   attendees?: AttendeeProfile[];
@@ -124,15 +125,46 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
     if (endorsedIds) setUserEndorsedIds(endorsedIds);
   }, [endorsedIds]);
 
+  // Nominee phone numbers are stripped from every public payload (the room runs
+  // on a public URL), so the console reads them back from the host-gated
+  // /api/admin/trustees and merges them in for display, editing and export.
+  const [contactsById, setContactsById] = useState<Record<string, string>>({});
+
+  const loadContacts = React.useCallback(async () => {
+    try {
+      const res = await hostFetch('/api/admin/trustees');
+      if (!res.ok) return; // no host key on this device: contacts stay hidden
+      const data = await res.json();
+      if (!Array.isArray(data?.candidates)) return;
+      const map: Record<string, string> = {};
+      for (const c of data.candidates) {
+        if (c?.id && c.phoneOrContact) map[c.id] = c.phoneOrContact;
+      }
+      setContactsById(map);
+    } catch (e) {
+      // Offline or not the host — the rest of the grid still works.
+    }
+  }, []);
+
+  const candidateIdSignature = candidates.map(c => c.id).join('|');
+  useEffect(() => {
+    loadContacts();
+  }, [candidateIdSignature, loadContacts]);
+
+  const contactFor = (cand: TrusteeCandidate) => contactsById[cand.id] || cand.phoneOrContact || '';
+
   // Apply a server response: candidate list + what this device has voted on
   const syncFromServer = (data: any) => {
     if (!data) return;
     if (Array.isArray(data.candidates)) setCandidates(data.candidates);
     if (data.myVotes && onMyVotesChange) onMyVotesChange(data.myVotes);
+    loadContacts();
   };
 
+  // hostFetch attaches x-tcf-host when this device holds the host key; audience
+  // phones send no header and the open routes here are unaffected.
   const postJson = (url: string, body: unknown, method: 'POST' | 'DELETE' = 'POST') =>
-    fetch(url, method === 'DELETE'
+    hostFetch(url, method === 'DELETE'
       ? { method }
       : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
@@ -257,7 +289,7 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
       setFormName(existingCand.name);
       setFormTitle(existingCand.titleOrOrg);
       setFormBio(existingCand.bio || '');
-      setFormContact(existingCand.phoneOrContact || '');
+      setFormContact(contactFor(existingCand));
       setFormScoreR(existingCand.scoreR);
       setFormScoreN(existingCand.scoreN);
       setFormScoreT(existingCand.scoreT);
@@ -447,7 +479,7 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
         `"${seat.title.replace(/"/g, '""')}"`,
         `"${cand.name.replace(/"/g, '""')}"`,
         `"${cand.titleOrOrg.replace(/"/g, '""')}"`,
-        `"${(cand.phoneOrContact || '').replace(/"/g, '""')}"`,
+        `"${contactFor(cand).replace(/"/g, '""')}"`,
         cand.scoreR,
         cand.scoreN,
         cand.scoreT,
@@ -817,10 +849,10 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
 
                       {/* Contact / CAMA Badges */}
                       <div className="flex flex-wrap items-center gap-2 pt-1">
-                        {cand.phoneOrContact && (
+                        {contactFor(cand) && (
                           <span className="text-[11px] font-mono text-[#09251B]/70 bg-[#FAF8F4] px-2.5 py-1 rounded-lg border border-[#09251B]/10 flex items-center gap-1">
                             <Phone className="w-3 h-3 text-[#0D4734]" />
-                            <span>{cand.phoneOrContact}</span>
+                            <span>{contactFor(cand)}</span>
                           </span>
                         )}
 

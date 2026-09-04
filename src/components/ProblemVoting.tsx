@@ -10,6 +10,7 @@ import { BrandLogo } from './BrandLogo';
 import { SeamlessProblemWizard } from './SeamlessProblemWizard';
 import { useVotingAnimation } from './VotingParticleManager';
 import { TrusteeSelectionVoting } from './TrusteeSelectionVoting';
+import { hostFetch } from '../utils/hostKey';
 
 interface ProblemVotingProps {
   problems: PlateauProblem[];
@@ -312,7 +313,7 @@ export const ProblemVoting: React.FC<ProblemVotingProps> = ({
     setLoadingAiId(problem.id);
     setAiError(null);
     try {
-      const res = await fetch('/api/generate-solution-plan', {
+      const res = await hostFetch('/api/generate-solution-plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

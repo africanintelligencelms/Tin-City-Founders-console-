@@ -76,6 +76,23 @@ const SLIDES: SlideConfig[] = [
   { id: 'founders', label: 'Live Founder Spotlight', shortLabel: 'Founders', icon: Users },
 ];
 
+/**
+ * The join QR is the single point of failure for the whole room: if it encodes a
+ * stale address, every phone that scans it fails and the screen still looks
+ * correct. So a cached join URL is trusted only while its origin matches the
+ * server currently serving this page; anything else (a saved localhost, an old
+ * tunnel, a malformed string) falls back to the live origin.
+ */
+function sameOriginOrLive(savedUrl: unknown, liveUrl: string): string {
+  if (typeof savedUrl !== 'string' || !savedUrl.trim()) return liveUrl;
+  try {
+    return new URL(savedUrl).origin === window.location.origin ? savedUrl : liveUrl;
+  } catch (e) {
+    // Not a parseable absolute URL — never put it on the projector.
+    return liveUrl;
+  }
+}
+
 export const ProjectorStage: React.FC<ProjectorStageProps> = ({
   attendeesCount = 4,
   latestProblem,
@@ -152,7 +169,13 @@ export const ProjectorStage: React.FC<ProjectorStageProps> = ({
       if (saved) {
         const parsed = JSON.parse(saved);
         setUrls({
-          console: parsed.console || defaultAudienceOrigin,
+          // A cached join URL is only honoured while it still points at THIS
+          // server. A projector that once saved http://localhost:3000 would
+          // otherwise render a perfectly scannable QR for an address nobody in
+          // the room can reach — 100 phones, connection refused, and nothing on
+          // screen looking wrong. The live origin always wins on a mismatch.
+          console: sameOriginOrLive(parsed.console, defaultAudienceOrigin),
+          // wa and form are deliberately external links; leave them as saved.
           wa: parsed.wa || 'https://chat.whatsapp.com/TinCityFoundersGroup',
           form: parsed.form || 'https://forms.gle/TinCityGiveAndAskForm'
         });
