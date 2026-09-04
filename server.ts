@@ -505,10 +505,24 @@ const defaultTrusteeCandidates = [
 type ServerProblem = (typeof defaultProblems)[number] & { baseUpvotes?: number; baseCommitments?: number };
 type ServerTrustee = (typeof defaultTrusteeCandidates)[number] & { baseVotes?: number };
 
-let problems: ServerProblem[] = [...defaultProblems];
-let attendees = [...defaultAttendees];
-let categoriesStore = { ...defaultCategoriesStore };
-let trusteeCandidates: ServerTrustee[] = [...defaultTrusteeCandidates];
+// The room starts EMPTY and fills as real people scan in. The default* arrays
+// above are demo content kept for their shape (they define the types below) and
+// for replay: start with SEED_ROOM=1 to load them back.
+//   SEED_ROOM=1 npm run dev
+const SEED_ROOM = process.env.SEED_ROOM === "1";
+
+// Sectors are the fixed taxonomy, so they stay — but with no phantom votes on them.
+const emptyCategoriesStore = Object.fromEntries(
+  Object.entries(defaultCategoriesStore).map(([name, cat]) => [
+    name,
+    { ...cat, upvotes: 0, baseUpvotes: 0 }
+  ])
+) as typeof defaultCategoriesStore;
+
+let problems: ServerProblem[] = SEED_ROOM ? [...defaultProblems] : [];
+let attendees = SEED_ROOM ? [...defaultAttendees] : ([] as typeof defaultAttendees);
+let categoriesStore = SEED_ROOM ? { ...defaultCategoriesStore } : emptyCategoriesStore;
+let trusteeCandidates: ServerTrustee[] = SEED_ROOM ? [...defaultTrusteeCandidates] : [];
 
 // -------------------------------------------------------------
 // Vote Integrity: one vote per voter (tcf_vid) per target
@@ -1233,6 +1247,11 @@ function archiveActiveRound() {
   roundHistory.unshift(activeRound);
   if (roundHistory.length > 20) roundHistory.length = 20;
   const clearedId = activeRound.id;
+  // The tally is already snapshotted into round.results, so the individual
+  // ballots have served their purpose. Dropping them keeps the state file flat
+  // across an evening instead of growing ~30KB per round, and stops per-voter
+  // selections sitting on disk long after the round they belonged to.
+  roundBallots = roundBallots.filter(b => b.roundId !== clearedId);
   activeRound = null;
   if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
   syncRoundToSession();
