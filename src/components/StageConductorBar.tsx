@@ -31,6 +31,9 @@ interface StageConductorBarProps {
   trusteeCandidates?: TrusteeCandidate[];
   // Most recently archived round — powers the "Top 3 from last round" shortcut.
   lastRound?: VotingRound | null;
+  // Every archived round (newest first) — powers "New since last round", which
+  // needs to know everything that has ever been on a ballot, not just the last one.
+  roundHistory?: VotingRound[];
 }
 
 const PHASES: Array<{
@@ -113,7 +116,8 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
   problems = [],
   categories = [],
   trusteeCandidates = [],
-  lastRound = null
+  lastRound = null,
+  roundHistory = []
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(!isCompact);
   const [isBroadcastOpen, setIsBroadcastOpen] = useState<boolean>(false);
@@ -219,6 +223,30 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
     if (!canUseTopThree) return;
     sounds.playTapSound();
     const keep = new Set(topThreeIds);
+    setExcludedOptionIds(availableOptions.map(o => o.id).filter(id => !keep.has(id)));
+  };
+
+  // Everything that has ever appeared on a ballot of THIS kind. A trustee
+  // round's history must not shrink a problem ballot, hence the kind filter.
+  // Being carried onto a shortlist round counts as having been seen.
+  const sameKindHistory = useMemo(
+    () => roundHistory.filter(r => r && r.kind === roundKind && Array.isArray(r.options)),
+    [roundHistory, roundKind]
+  );
+
+  const neverBallotedIds = useMemo(() => {
+    if (sameKindHistory.length === 0) return [];
+    const seen = new Set<string>();
+    sameKindHistory.forEach(r => r.options.forEach(o => seen.add(o.id)));
+    return availableOptions.map(o => o.id).filter(id => !seen.has(id));
+  }, [sameKindHistory, availableOptions]);
+
+  const canUseNewSince = sameKindHistory.length > 0 && neverBallotedIds.length >= 2;
+
+  const selectNewSince = () => {
+    if (!canUseNewSince) return;
+    sounds.playTapSound();
+    const keep = new Set(neverBallotedIds);
     setExcludedOptionIds(availableOptions.map(o => o.id).filter(id => !keep.has(id)));
   };
 
@@ -591,6 +619,21 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
                           >
                             <Trophy className="w-3 h-3" />
                             Top 3 from last round
+                          </button>
+                          <button
+                            onClick={selectNewSince}
+                            disabled={!canUseNewSince}
+                            title={
+                              sameKindHistory.length === 0
+                                ? 'No closed round of this type yet — everything here is still new'
+                                : canUseNewSince
+                                  ? `Tick only the ${neverBallotedIds.length} that have never been on a ballot`
+                                  : 'Fewer than 2 options here have never been on a ballot'
+                            }
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-emerald-400/50 bg-emerald-400/15 text-emerald-200 hover:bg-emerald-400/25 disabled:opacity-35 disabled:cursor-not-allowed text-[11px] font-display font-bold transition cursor-pointer"
+                          >
+                            <Sparkles className="w-3 h-3" />
+                            New since last round
                           </button>
                         </div>
                       </div>

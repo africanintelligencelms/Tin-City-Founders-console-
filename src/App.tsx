@@ -79,6 +79,10 @@ export default function App() {
   // have no clue a round ever ran.
   const [lastRound, setLastRound] = useState<VotingRound | null>(null);
 
+  // Every archived round the server still holds (newest first). The host's
+  // ballot picker uses it to work out which options have never been voted on.
+  const [roundHistory, setRoundHistory] = useState<VotingRound[]>([]);
+
   const handleToggleAudienceMode = (enableAudience: boolean) => {
     // Without a valid host key there is no way out of audience mode.
     if (!enableAudience && !isHostVerified) return;
@@ -149,7 +153,10 @@ export default function App() {
       if (data.myBallot) setMyRoundBallot(data.myBallot);
       // history[0] is the newest archived round — what the idle screen shows as
       // "last round result" for anyone who missed the live reveal.
-      if (Array.isArray(data.history)) setLastRound(data.history[0] ?? null);
+      if (Array.isArray(data.history)) {
+        setLastRound(data.history[0] ?? null);
+        setRoundHistory(data.history);
+      }
     } catch (e) {
       // Offline: the SSE snapshot will fill this in when the link comes back
     }
@@ -505,7 +512,13 @@ export default function App() {
           // disappear the instant the reveal window closes.
           try {
             const data = JSON.parse(e.data);
-            if (data?.round) setLastRound(data.round);
+            if (data?.round) {
+              setLastRound(data.round);
+              // Keep the picker's "seen before" set current without a refetch.
+              setRoundHistory(prev =>
+                prev.some(r => r.id === data.round.id) ? prev : [data.round, ...prev]
+              );
+            }
           } catch (err) {}
         });
 
@@ -1122,6 +1135,7 @@ export default function App() {
               categories={liveCategories}
               trusteeCandidates={trusteeCandidates}
               lastRound={lastRound}
+              roundHistory={roundHistory}
             />
           </div>
 
