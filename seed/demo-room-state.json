@@ -1,0 +1,792 @@
+{
+  "problems": [
+    {
+      "id": "prob-1",
+      "title": "Cold-Chain & Solar Preservation for Potato & Tomato Farmers in Vom/Bokkos",
+      "description": "Post-harvest loss reaches over 40% for Plateau fresh produce due to lack of off-grid solar cold storage and direct market logistics. Founders can build IoT monitored cold hubs and order matching.",
+      "category": "Agro-Tech & Cold Chain",
+      "submittedBy": "Pamela D. (Jos South)",
+      "upvotes": 42,
+      "commitments": 18,
+      "status": "Active Squad",
+      "collaborators": [
+        "Pamela D.",
+        "Mark G.",
+        "Chidi O.",
+        "Yusuf K."
+      ],
+      "skillsNeeded": [
+        "IoT Hardware",
+        "Solar Power Engineer",
+        "Mobile App Dev",
+        "Agro Logistics"
+      ],
+      "createdAt": "2026-08-29T15:07:16.500Z",
+      "comments": [
+        {
+          "id": "c1",
+          "author": "Mark G.",
+          "text": "I have experience with ESP32 sensors and temperature logging. Happy to lead hardware build in Rayfield!",
+          "date": "2 days ago"
+        },
+        {
+          "id": "c2",
+          "author": "Chidi O.",
+          "text": "We can link this to our logistics web platform for Plateau farm off-takers in Abuja and Lagos.",
+          "date": "1 day ago"
+        }
+      ],
+      "baseUpvotes": 42,
+      "baseCommitments": 18
+    },
+    {
+      "id": "prob-2",
+      "title": "Uninterrupted Mesh Internet & Power Hub for Tech Nodes across Anglo Jos & Bukuru",
+      "description": "Frequent power cuts and fiber outages disrupt remote engineering teams in Jos. Need a co-funded solar micro-grid + Starlink failover mesh shared among tech hubs and startups.",
+      "category": "Infrastructure",
+      "submittedBy": "Gyang K. (Rayfield)",
+      "upvotes": 35,
+      "commitments": 14,
+      "status": "Ideation",
+      "collaborators": [
+        "Gyang K.",
+        "Esther M.",
+        "Suleiman B."
+      ],
+      "skillsNeeded": [
+        "Network Engineering",
+        "Solar System Integrator",
+        "Community Organizing"
+      ],
+      "createdAt": "2026-08-31T15:07:16.500Z",
+      "comments": [
+        {
+          "id": "c3",
+          "author": "Esther M.",
+          "text": "We can set up a shared node at our hub in Anglo Jos as a pilot test site.",
+          "date": "Yesterday"
+        }
+      ],
+      "baseUpvotes": 35,
+      "baseCommitments": 14
+    },
+    {
+      "id": "prob-3",
+      "title": "Global Export & Payment Gateway for Jos Artisanal Mining & Gemstone Crafters",
+      "description": "Plateau gemstone miners & lapidary artisans lack direct international escrow, verified authenticity passports, and cross-border payment integration for high-value export markets.",
+      "category": "Commerce & Export",
+      "submittedBy": "Bilikisu A. (Jos North)",
+      "upvotes": 29,
+      "commitments": 11,
+      "status": "Squad Forming",
+      "collaborators": [
+        "Bilikisu A.",
+        "David T."
+      ],
+      "skillsNeeded": [
+        "Fintech / Stripe API",
+        "Product Design",
+        "Compliance / Export Law"
+      ],
+      "createdAt": "2026-09-01T15:07:16.500Z",
+      "comments": [],
+      "baseUpvotes": 29,
+      "baseCommitments": 11
+    },
+    {
+      "id": "prob-4",
+      "title": "Jos Tech Talent Pipeline: Industry-Gated Apprenticeships for Unijos / PLASU Graduates",
+      "description": "Computer science grads from University of Jos and Plateau State University struggle with practical production code. Need a 12-week open-source project incubator matched with local startup mentors.",
+      "category": "Tech Talent & Education",
+      "submittedBy": "Engr. Victor (Unijos)",
+      "upvotes": 51,
+      "commitments": 25,
+      "status": "Prototype Built",
+      "collaborators": [
+        "Engr. Victor",
+        "Ruth E.",
+        "Solomon P.",
+        "Zainab H."
+      ],
+      "skillsNeeded": [
+        "Senior Mentors",
+        "Curriculum Leads",
+        "DevOps Engineers"
+      ],
+      "createdAt": "2026-08-27T15:07:16.500Z",
+      "comments": [
+        {
+          "id": "c4",
+          "author": "Ruth E.",
+          "text": "First cohort of 15 apprentices starting next month at nHub space!",
+          "date": "3 days ago"
+        }
+      ],
+      "baseUpvotes": 51,
+      "baseCommitments": 25
+    }
+  ],
+  "attendees": [
+    {
+      "id": "att-1",
+      "name": "Pamela Dung",
+      "title": "Founder @ AgriPlateau ColdHubs",
+      "tags": [
+        "Agro-Tech & Cold Chain",
+        "Hardware & Solar",
+        "Founder / CEO"
+      ],
+      "bio": "Building IoT solar cold-storage containers for Irish potato farmers in Bokkos and Mangu.",
+      "giveAsk": "Give: IoT firmware / ESP32 architecture help. Ask: Introductions to off-takers and farm cooperatives.",
+      "location": "Jos South",
+      "avatarColor": "#0D4734",
+      "checkedInAt": "2026-09-03T14:22:16.500Z"
+    },
+    {
+      "id": "att-2",
+      "name": "Gyang Kim",
+      "title": "Lead Systems Engineer @ PeakMesh",
+      "tags": [
+        "Infrastructure",
+        "AI & Software",
+        "DevOps / Cloud"
+      ],
+      "bio": "Setting up failover wireless mesh grids and solar battery backups for tech workspaces in Jos.",
+      "giveAsk": "Give: Network routing & cloud server hosting tips. Ask: Landlord permission for rooftop antennas in Rayfield.",
+      "location": "Rayfield, Jos",
+      "avatarColor": "#166E52",
+      "checkedInAt": "2026-09-03T14:37:16.500Z"
+    },
+    {
+      "id": "att-3",
+      "name": "Bilikisu Ahmed",
+      "title": "Co-Founder @ JosGems Marketplace",
+      "tags": [
+        "Commerce & Export",
+        "Fintech / Payments",
+        "Product & Design"
+      ],
+      "bio": "Empowering Plateau artisanal mineral lapidaries with digital escrow verification and global DHL shipping.",
+      "giveAsk": "Give: Export customs compliance & UI/UX feedback. Ask: React Native developer for mobile checkout.",
+      "location": "Jos North",
+      "avatarColor": "#E5A93C",
+      "checkedInAt": "2026-09-03T14:47:16.500Z"
+    },
+    {
+      "id": "att-4",
+      "name": "Solomon Pwajok",
+      "title": "Full-Stack Dev & Unijos CS Mentor",
+      "tags": [
+        "Tech Talent & Education",
+        "AI & Software",
+        "Student / Builder"
+      ],
+      "bio": "Passionate about open-source developer tooling and training the next generation of Plateau tech builders.",
+      "giveAsk": "Give: Fullstack code reviews (React/Node/Python). Ask: Startup internships for top 10 graduating students.",
+      "location": "University of Jos",
+      "avatarColor": "#BF7E1D",
+      "checkedInAt": "2026-09-03T14:57:16.500Z"
+    }
+  ],
+  "categoriesStore": {
+    "Infrastructure": {
+      "upvotes": 38,
+      "description": "Roads, transit hubs, internet mesh grids & physical facility access across Jos and Plateau State.",
+      "iconName": "Building2",
+      "baseUpvotes": 38
+    },
+    "Safety": {
+      "upvotes": 45,
+      "description": "Community security networks, rapid emergency alerts, streetlight power & verified identity systems.",
+      "iconName": "ShieldAlert",
+      "baseUpvotes": 45
+    },
+    "Services": {
+      "upvotes": 29,
+      "description": "Public health access, waste management, municipal tools & digital civic administration for citizens.",
+      "iconName": "Layers",
+      "baseUpvotes": 29
+    },
+    "Agro-Tech & Cold Chain": {
+      "upvotes": 52,
+      "description": "Solar cold storage, farmer-to-market logistics, soil telemetry & crop preservation in Bokkos/Vom.",
+      "iconName": "Sprout",
+      "baseUpvotes": 52
+    },
+    "Tech Talent & Education": {
+      "upvotes": 41,
+      "description": "University incubators (Unijos/PLASU), developer bootcamps & industry mentorship pipelines.",
+      "iconName": "GraduationCap",
+      "baseUpvotes": 41
+    },
+    "Commerce & Export": {
+      "upvotes": 33,
+      "description": "Gemstone lapidary exports, artisan escrow, cross-border payment gateways & local trade platforms.",
+      "iconName": "ShoppingBag",
+      "baseUpvotes": 33
+    },
+    "Energy & Power": {
+      "upvotes": 36,
+      "description": "Off-grid renewable power systems, solar micro-grids & battery swap infrastructure for businesses.",
+      "iconName": "Zap",
+      "baseUpvotes": 36
+    }
+  },
+  "trusteeCandidates": [
+    {
+      "id": "cand-1",
+      "seatNumber": 1,
+      "name": "Nanle Jerry",
+      "titleOrOrg": "Tin City Founders Convener & AgriGrid CEO",
+      "bio": "Pioneering agricultural tech and developer communities in Jos since 2019. Committed to full CAC legal incorporation.",
+      "phoneOrContact": "+234 803 123 4567",
+      "scoreR": 5,
+      "scoreN": 5,
+      "scoreT": 5,
+      "reachable": true,
+      "confirmed": true,
+      "camaChecks": {
+        "isOver18": true,
+        "isSoundMind": true,
+        "notBankrupt": true,
+        "noFraudConviction": true
+      },
+      "votes": 38,
+      "nominatedBy": "Founding Assembly",
+      "createdAt": 1788188836500,
+      "notes": "Primary convener signatory for CAC Part F association registration.",
+      "baseVotes": 38
+    },
+    {
+      "id": "cand-2",
+      "seatNumber": 2,
+      "name": "Bitrus Longbap",
+      "titleOrOrg": "Ecosystem Lead @ Plateau Tech Grid",
+      "bio": "Spearheaded outreach across 6 Plateau universities and connected over 140 engineers to startups.",
+      "phoneOrContact": "+234 812 987 6543",
+      "scoreR": 4,
+      "scoreN": 5,
+      "scoreT": 5,
+      "reachable": true,
+      "confirmed": true,
+      "camaChecks": {
+        "isOver18": true,
+        "isSoundMind": true,
+        "notBankrupt": true,
+        "noFraudConviction": true
+      },
+      "votes": 28,
+      "nominatedBy": "Jos Founders Collective",
+      "createdAt": 1788275236500,
+      "notes": "Handles partnerships with northern developer networks.",
+      "baseVotes": 27
+    },
+    {
+      "id": "cand-3",
+      "seatNumber": 3,
+      "name": "Keziah Mallo",
+      "titleOrOrg": "Founder, J-Town Creative Studio & Tech Narratives",
+      "bio": "Brand strategist & documentary producer telling stories of Plateau entrepreneurs and tech innovators.",
+      "phoneOrContact": "+234 809 333 8899",
+      "scoreR": 5,
+      "scoreN": 4,
+      "scoreT": 5,
+      "reachable": true,
+      "confirmed": true,
+      "camaChecks": {
+        "isOver18": true,
+        "isSoundMind": true,
+        "notBankrupt": true,
+        "noFraudConviction": true
+      },
+      "votes": 31,
+      "nominatedBy": "Media & Growth Track",
+      "createdAt": 1788275236500,
+      "baseVotes": 31
+    },
+    {
+      "id": "cand-4",
+      "seatNumber": 4,
+      "name": "David Choji",
+      "titleOrOrg": "VP Operations, Highland Hub & Jos DevCon",
+      "bio": "Manages multi-track programming, hackathons, and governance schedules for tech gatherings.",
+      "phoneOrContact": "+234 805 777 1122",
+      "scoreR": 5,
+      "scoreN": 4,
+      "scoreT": 4,
+      "reachable": true,
+      "confirmed": true,
+      "camaChecks": {
+        "isOver18": true,
+        "isSoundMind": true,
+        "notBankrupt": true,
+        "noFraudConviction": true
+      },
+      "votes": 24,
+      "nominatedBy": "Founding Ops Squad",
+      "createdAt": 1788361636500,
+      "baseVotes": 24
+    },
+    {
+      "id": "cand-5",
+      "seatNumber": 5,
+      "name": "Chief Dachung Gyang",
+      "titleOrOrg": "Chairman, Plateau Enterprise Holdings & Jos Commercial Chamber",
+      "bio": "30+ years leading manufacturing and agro-processing businesses in Plateau State.",
+      "phoneOrContact": "+234 802 444 5555",
+      "scoreR": 4,
+      "scoreN": 5,
+      "scoreT": 5,
+      "reachable": true,
+      "confirmed": true,
+      "camaChecks": {
+        "isOver18": true,
+        "isSoundMind": true,
+        "notBankrupt": true,
+        "noFraudConviction": true
+      },
+      "votes": 42,
+      "nominatedBy": "Chamber of Commerce Alliance",
+      "createdAt": 1788102436500,
+      "notes": "Key board sponsor for regional industrial alignment.",
+      "baseVotes": 42
+    },
+    {
+      "id": "cand-6",
+      "seatNumber": 6,
+      "name": "Samuel Adebayo",
+      "titleOrOrg": "Founders Coach & Angel Mentor",
+      "bio": "Venture mentor advising top African early-stage startups and structuring founder governance pacts.",
+      "phoneOrContact": "+234 806 888 9900",
+      "scoreR": 5,
+      "scoreN": 5,
+      "scoreT": 5,
+      "reachable": true,
+      "confirmed": true,
+      "camaChecks": {
+        "isOver18": true,
+        "isSoundMind": true,
+        "notBankrupt": true,
+        "noFraudConviction": true
+      },
+      "votes": 46,
+      "nominatedBy": "Founders Assembly",
+      "createdAt": 1788016036500,
+      "notes": "Exemplary R=5, T=5 mentor identified on official template.",
+      "baseVotes": 46
+    },
+    {
+      "id": "cand-7",
+      "seatNumber": 7,
+      "name": "Prof. Victor Datong",
+      "titleOrOrg": "Dean of Computing & Applied AI, University of Jos",
+      "bio": "Spearheading campus-to-industry tech pipelines and federal research grant collaborations.",
+      "phoneOrContact": "+234 803 999 1100",
+      "scoreR": 4,
+      "scoreN": 5,
+      "scoreT": 5,
+      "reachable": true,
+      "confirmed": false,
+      "camaChecks": {
+        "isOver18": true,
+        "isSoundMind": true,
+        "notBankrupt": true,
+        "noFraudConviction": true
+      },
+      "votes": 29,
+      "nominatedBy": "Academic Working Group",
+      "createdAt": 1788361636500,
+      "baseVotes": 29
+    },
+    {
+      "id": "cand-8",
+      "seatNumber": 8,
+      "name": "Elder Grace Pam",
+      "titleOrOrg": "Plateau Civic Trust & Peace Building Council Trustee",
+      "bio": "Highly respected mediator and community elder with 25 years of civic leadership across Plateau communities.",
+      "phoneOrContact": "+234 802 111 2233",
+      "scoreR": 5,
+      "scoreN": 4,
+      "scoreT": 5,
+      "reachable": true,
+      "confirmed": true,
+      "camaChecks": {
+        "isOver18": true,
+        "isSoundMind": true,
+        "notBankrupt": true,
+        "noFraudConviction": true
+      },
+      "votes": 35,
+      "nominatedBy": "Civic Council",
+      "createdAt": 1788188836500,
+      "baseVotes": 35
+    },
+    {
+      "id": "cand-9",
+      "seatNumber": 9,
+      "name": "Malam Ibrahim Danladi",
+      "titleOrOrg": "President, Terminus Traders & Automotive Spares Union",
+      "bio": "Bridge between high-tech platforms and 10,000+ daily physical merchants in Jos main market.",
+      "phoneOrContact": "+234 808 222 3344",
+      "scoreR": 4,
+      "scoreN": 5,
+      "scoreT": 4,
+      "reachable": true,
+      "confirmed": true,
+      "camaChecks": {
+        "isOver18": true,
+        "isSoundMind": true,
+        "notBankrupt": true,
+        "noFraudConviction": true
+      },
+      "votes": 28,
+      "nominatedBy": "Real-Economy SME Wing",
+      "createdAt": 1788275236500,
+      "baseVotes": 28
+    },
+    {
+      "id": "cand-10",
+      "seatNumber": 10,
+      "name": "Pamela Dung",
+      "titleOrOrg": "Founder & CEO, AgroCold Jos",
+      "bio": "Award-winning agri-logistics founder building solar cold-chain storage for Plateau farmers.",
+      "phoneOrContact": "+234 814 555 6677",
+      "scoreR": 5,
+      "scoreN": 5,
+      "scoreT": 5,
+      "reachable": true,
+      "confirmed": true,
+      "camaChecks": {
+        "isOver18": true,
+        "isSoundMind": true,
+        "notBankrupt": true,
+        "noFraudConviction": true
+      },
+      "votes": 39,
+      "nominatedBy": "Women Techmakers Jos",
+      "createdAt": 1788188836500,
+      "baseVotes": 39
+    },
+    {
+      "id": "cand-11",
+      "seatNumber": 11,
+      "name": "Emmanuel Pwajok",
+      "titleOrOrg": "Lead Builder @ Jos Student Devs (Finalist, NITDA Hackathon)",
+      "bio": "Final year computer engineering student at PLASU who created offline mesh networking for rural students.",
+      "phoneOrContact": "+234 816 777 8899",
+      "scoreR": 4,
+      "scoreN": 4,
+      "scoreT": 4,
+      "reachable": true,
+      "confirmed": true,
+      "camaChecks": {
+        "isOver18": true,
+        "isSoundMind": true,
+        "notBankrupt": true,
+        "noFraudConviction": true
+      },
+      "votes": 33,
+      "nominatedBy": "Campus Builders Forum",
+      "createdAt": 1788361636500,
+      "baseVotes": 33
+    },
+    {
+      "id": "cand-12",
+      "seatNumber": 12,
+      "name": "Luka Goyol",
+      "titleOrOrg": "Director, Central Plateau Innovation Hub (Pankshin)",
+      "bio": "Connects central and southern Plateau agricultural hubs into the Jos tech ecosystem.",
+      "phoneOrContact": "+234 807 333 4455",
+      "scoreR": 5,
+      "scoreN": 5,
+      "scoreT": 5,
+      "reachable": true,
+      "confirmed": true,
+      "camaChecks": {
+        "isOver18": true,
+        "isSoundMind": true,
+        "notBankrupt": true,
+        "noFraudConviction": true
+      },
+      "votes": 36,
+      "nominatedBy": "Regional Unity Coalition",
+      "createdAt": 1788275236500,
+      "baseVotes": 36
+    }
+  ],
+  "activityLogs": [
+    {
+      "id": "act-1788526369821-x4ri",
+      "type": "session_phase_changed",
+      "title": "SESSION PHASE CHANGED",
+      "message": "Stage Conductor moved room to: 3. Live Problem Voting",
+      "author": "Host Conductor",
+      "timestamp": 1788526369821
+    },
+    {
+      "id": "act-1788526354361-e9pq",
+      "type": "round_closed",
+      "title": "ROUND CLOSED",
+      "message": "Round closed: \"Sector check\" \u2014 0 ballot(s) cast",
+      "author": "Host Conductor",
+      "timestamp": 1788526354361
+    },
+    {
+      "id": "act-1788526354351-6z4i",
+      "type": "round_opened",
+      "title": "ROUND OPENED",
+      "message": "Host opened a category round: \"Sector check\"",
+      "author": "Host Conductor",
+      "timestamp": 1788526354351
+    },
+    {
+      "id": "act-1788526330551-fxyx",
+      "type": "round_closed",
+      "title": "ROUND CLOSED",
+      "message": "Round closed: \"Endorse the first three trustees\" \u2014 1 ballot(s) cast",
+      "author": "Host Conductor",
+      "timestamp": 1788526330551
+    },
+    {
+      "id": "act-1788526312311-7ezu",
+      "type": "round_opened",
+      "title": "ROUND OPENED",
+      "message": "Host opened a trustee round: \"Endorse the first three trustees\"",
+      "author": "Host Conductor",
+      "timestamp": 1788526312311
+    },
+    {
+      "id": "act-1788526297292-z2x9",
+      "type": "session_phase_changed",
+      "title": "SESSION PHASE CHANGED",
+      "message": "Stage Conductor moved room to: 4. Trustee Election Matrix",
+      "author": "Host Conductor",
+      "timestamp": 1788526297292
+    },
+    {
+      "id": "act-1788526279420-mef7",
+      "type": "session_phase_changed",
+      "title": "SESSION PHASE CHANGED",
+      "message": "Stage Conductor moved room to: 2. Problem Pitch Floor",
+      "author": "Host Conductor",
+      "timestamp": 1788526279420
+    },
+    {
+      "id": "act-1788526253237-4eas",
+      "type": "session_phase_changed",
+      "title": "SESSION PHASE CHANGED",
+      "message": "Stage Conductor moved room to: 3. Live Problem Voting",
+      "author": "Host Conductor",
+      "timestamp": 1788526253237
+    },
+    {
+      "id": "act-1788525994057-8gk3",
+      "type": "session_phase_changed",
+      "title": "SESSION PHASE CHANGED",
+      "message": "Stage Conductor moved room to: 3. Live Problem Voting",
+      "author": "Host Conductor",
+      "timestamp": 1788525994057
+    },
+    {
+      "id": "act-1788525974080-edap",
+      "type": "round_closed",
+      "title": "ROUND CLOSED",
+      "message": "Round closed: \"Which problem do we fund first?\" \u2014 0 ballot(s) cast",
+      "author": "Host Conductor",
+      "timestamp": 1788525974080
+    },
+    {
+      "id": "act-1788525964662-jsjo",
+      "type": "round_opened",
+      "title": "ROUND OPENED",
+      "message": "Host opened a problem round: \"Which problem do we fund first?\"",
+      "author": "Host Conductor",
+      "timestamp": 1788525964662
+    },
+    {
+      "id": "act-1788525926188-mvu7",
+      "type": "round_closed",
+      "title": "ROUND CLOSED",
+      "message": "Round closed: \"Which sector leads Q1?\" \u2014 2 ballot(s) cast",
+      "author": "Host Conductor",
+      "timestamp": 1788525926188
+    },
+    {
+      "id": "act-1788525678699-1un1",
+      "type": "round_opened",
+      "title": "ROUND OPENED",
+      "message": "Host opened a category round: \"Which sector leads Q1?\"",
+      "author": "Host Conductor",
+      "timestamp": 1788525678700
+    },
+    {
+      "id": "act-1788525657799-qa81",
+      "type": "round_opened",
+      "title": "ROUND OPENED",
+      "message": "Host opened a trustee round: \"Confirm trustees\"",
+      "author": "Host Conductor",
+      "timestamp": 1788525657799
+    },
+    {
+      "id": "act-1788525638484-07oi",
+      "type": "round_closed",
+      "title": "ROUND CLOSED",
+      "message": "Round closed: \"Confirm the first 3 trustees\" \u2014 0 ballot(s) cast",
+      "author": "Host Conductor",
+      "timestamp": 1788525638484
+    },
+    {
+      "id": "act-1788525638458-rfe5",
+      "type": "session_phase_changed",
+      "title": "SESSION PHASE CHANGED",
+      "message": "Stage Conductor moved room to: 5. Action Squad Lock-In",
+      "author": "Host Conductor",
+      "timestamp": 1788525638458
+    },
+    {
+      "id": "act-1788525638446-va6y",
+      "type": "round_opened",
+      "title": "ROUND OPENED",
+      "message": "Host opened a trustee round: \"Confirm the first 3 trustees\"",
+      "author": "Host Conductor",
+      "timestamp": 1788525638446
+    },
+    {
+      "id": "act-1788525614576-49ak",
+      "type": "round_closed",
+      "title": "ROUND CLOSED",
+      "message": "Round closed: \"Confirm the first 3 trustees\" \u2014 0 ballot(s) cast",
+      "author": "Host Conductor",
+      "timestamp": 1788525614576
+    },
+    {
+      "id": "act-1788525614566-6ofa",
+      "type": "session_phase_changed",
+      "title": "SESSION PHASE CHANGED",
+      "message": "Stage Conductor moved room to: 4. Trustee Election Matrix",
+      "author": "Host Conductor",
+      "timestamp": 1788525614566
+    },
+    {
+      "id": "act-1788525614549-d10x",
+      "type": "round_opened",
+      "title": "ROUND OPENED",
+      "message": "Host opened a trustee round: \"Confirm the first 3 trustees\"",
+      "author": "Host Conductor",
+      "timestamp": 1788525614549
+    },
+    {
+      "id": "act-1788525584658-ey9h",
+      "type": "round_closed",
+      "title": "ROUND CLOSED",
+      "message": "Round closed: \"Which problem do we fund first?\" \u2014 3 ballot(s) cast",
+      "author": "Host Conductor",
+      "timestamp": 1788525584658
+    },
+    {
+      "id": "act-1788525561852-01qr",
+      "type": "round_opened",
+      "title": "ROUND OPENED",
+      "message": "Host opened a problem round: \"Which problem do we fund first?\"",
+      "author": "Host Conductor",
+      "timestamp": 1788525561852
+    },
+    {
+      "id": "act-1788448164578-67js",
+      "type": "category_vote_withdrawn",
+      "title": "CATEGORY VOTE WITHDRAWN",
+      "message": "A sector priority vote for \"Safety\" was withdrawn",
+      "author": "Founder",
+      "sector": "Safety",
+      "timestamp": 1788448164578
+    },
+    {
+      "id": "act-1788448162931-i1ii",
+      "type": "category_voted",
+      "title": "CATEGORY VOTED",
+      "message": "Prioritized sector: \"Safety\"",
+      "author": "Founder",
+      "sector": "Safety",
+      "timestamp": 1788448162931
+    },
+    {
+      "id": "act-1788448084621-83yc",
+      "type": "round_opened",
+      "title": "ROUND OPENED",
+      "message": "Voting opened: Prioritize Plateau Sectors",
+      "author": "Room Host",
+      "timestamp": 1788448084621
+    },
+    {
+      "id": "act-1788448050556-1w93",
+      "type": "round_cleared",
+      "title": "ROUND CLEARED",
+      "message": "Results dismissed: Endorse Founding Trustees",
+      "author": "Room Host",
+      "timestamp": 1788448050556
+    },
+    {
+      "id": "act-1788448050539-vxbr",
+      "type": "round_closed",
+      "title": "ROUND CLOSED",
+      "message": "Voting closed: Endorse Founding Trustees",
+      "author": "Room Host",
+      "timestamp": 1788448050539
+    },
+    {
+      "id": "act-1788448050507-k93n",
+      "type": "trustee_voted",
+      "title": "TRUSTEE VOTED",
+      "message": "Endorsed Bitrus Longbap for Trustee Seat 2",
+      "author": "Spectator",
+      "timestamp": 1788448050508
+    },
+    {
+      "id": "act-1788448050106-qjov",
+      "type": "round_opened",
+      "title": "ROUND OPENED",
+      "message": "Voting opened: Endorse Founding Trustees",
+      "author": "Room Host",
+      "timestamp": 1788448050106
+    },
+    {
+      "id": "act-1",
+      "type": "squad_joined",
+      "title": "Squad Commitment",
+      "message": "Pamela D. joined Cold-Chain & Solar Preservation squad.",
+      "author": "Pamela D.",
+      "sector": "Agro-Tech & Cold Chain",
+      "timestamp": 1788447136501
+    },
+    {
+      "id": "act-2",
+      "type": "trustee_vote",
+      "title": "Trustee Endorsement",
+      "message": "Samuel Adebayo received +1 Trustee Vote for Seat 6.",
+      "author": "Room Voter",
+      "timestamp": 1788447436501
+    }
+  ],
+  "voteRecords": [
+    {
+      "id": "vote-1788448050507-a01y1n",
+      "voterId": "12307667640741cc8c75a8139218374a",
+      "kind": "trustee",
+      "targetId": "cand-2",
+      "voterName": "Spectator",
+      "ts": 1788448050507
+    }
+  ],
+  "roomSessionState": {
+    "activePhase": "voting",
+    "phaseTitle": "Live Plateau Problem Voting & Squad Formation",
+    "announcement": null,
+    "allowAudienceNavigation": true,
+    "activeRound": null,
+    "updatedAt": 1788526369820
+  },
+  "activeRound": null,
+  "roundBallots": [],
+  "roundHistory": [],
+  "lastSaved": 1788526369821
+}

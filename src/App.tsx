@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { NavigationTab, PlateauProblem, AttendeeProfile, ToastNotification, RoomSessionState } from './types';
 import type { TrusteeCandidate, CategoryInfo, MyVotes, MyRoundBallot, RoundKind } from './types';
-import { INITIAL_TRUSTEE_CANDIDATES } from './data/trusteeSeatsData';
 import { Header } from './components/Header';
 import { ProblemVoting } from './components/ProblemVoting';
 import { AttendeeDirectory } from './components/AttendeeDirectory';
@@ -18,125 +17,10 @@ import { AudienceParticipationView } from './components/AudienceParticipationVie
 import { StageConductorBar } from './components/StageConductorBar';
 import { RoundTakeover } from './components/RoundTakeover';
 
-// Default initial problems in case server endpoint is loading
-const defaultInitialProblems: PlateauProblem[] = [
-  {
-    id: 'prob-1',
-    title: 'Cold-Chain & Solar Preservation for Potato & Tomato Farmers in Vom/Bokkos',
-    description: 'Post-harvest loss reaches over 40% for Plateau fresh produce due to lack of off-grid solar cold storage and direct market logistics. Founders can build IoT monitored cold hubs and order matching.',
-    category: 'Agro-Tech & Cold Chain',
-    submittedBy: 'Pamela D. (Jos South)',
-    upvotes: 42,
-    commitments: 18,
-    status: 'Active Squad',
-    collaborators: ['Pamela D.', 'Mark G.', 'Chidi O.', 'Yusuf K.'],
-    skillsNeeded: ['IoT Hardware', 'Solar Power Engineer', 'Mobile App Dev', 'Agro Logistics'],
-    createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-    comments: [
-      { id: 'c1', author: 'Mark G.', text: 'I have experience with ESP32 sensors and temperature logging. Happy to lead hardware build in Rayfield!', date: '2 days ago' },
-      { id: 'c2', author: 'Chidi O.', text: 'We can link this to our logistics web platform for Plateau farm off-takers in Abuja and Lagos.', date: '1 day ago' }
-    ]
-  },
-  {
-    id: 'prob-2',
-    title: 'Uninterrupted Mesh Internet & Power Hub for Tech Nodes across Anglo Jos & Bukuru',
-    description: 'Frequent power cuts and fiber outages disrupt remote engineering teams in Jos. Need a co-funded solar micro-grid + Starlink failover mesh shared among tech hubs and startups.',
-    category: 'Infrastructure',
-    submittedBy: 'Gyang K. (Rayfield)',
-    upvotes: 35,
-    commitments: 14,
-    status: 'Ideation',
-    collaborators: ['Gyang K.', 'Esther M.', 'Suleiman B.'],
-    skillsNeeded: ['Network Engineering', 'Solar System Integrator', 'Community Organizing'],
-    createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-    comments: [
-      { id: 'c3', author: 'Esther M.', text: 'We can set up a shared node at our hub in Anglo Jos as a pilot test site.', date: 'Yesterday' }
-    ]
-  },
-  {
-    id: 'prob-3',
-    title: 'Global Export & Payment Gateway for Jos Artisanal Mining & Gemstone Crafters',
-    description: 'Plateau gemstone miners & lapidary artisans lack direct international escrow, verified authenticity passports, and cross-border payment integration for high-value export markets.',
-    category: 'Commerce & Export',
-    submittedBy: 'Bilikisu A. (Jos North)',
-    upvotes: 29,
-    commitments: 11,
-    status: 'Squad Forming',
-    collaborators: ['Bilikisu A.', 'David T.'],
-    skillsNeeded: ['Fintech / Stripe API', 'Product Design', 'Compliance / Export Law'],
-    createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-    comments: []
-  },
-  {
-    id: 'prob-4',
-    title: 'Jos Tech Talent Pipeline: Industry-Gated Apprenticeships for Unije / PLASU Graduates',
-    description: 'Computer science grads from University of Jos and Plateau State University struggle with practical production code. Need a 12-week open-source project incubator matched with local startup mentors.',
-    category: 'Tech Talent & Education',
-    submittedBy: 'Engr. Victor (Unijos)',
-    upvotes: 51,
-    commitments: 25,
-    status: 'Prototype Built',
-    collaborators: ['Engr. Victor', 'Ruth E.', 'Solomon P.', 'Zainab H.'],
-    skillsNeeded: ['Senior Mentors', 'Curriculum Leads', 'DevOps Engineers'],
-    createdAt: new Date(Date.now() - 86400000 * 7).toISOString(),
-    comments: [
-      { id: 'c4', author: 'Ruth E.', text: 'First cohort of 15 apprentices starting next month at nHub space!', date: '3 days ago' }
-    ]
-  }
-];
-
-// Default sample checked-in attendees
-const defaultInitialAttendees: AttendeeProfile[] = [
-  {
-    id: 'att-1',
-    name: 'Pamela Dung',
-    title: 'Founder @ AgriPlateau ColdHubs',
-    tags: ['Agro-Tech & Cold Chain', 'Hardware & Solar', 'Founder / CEO'],
-    bio: 'Building IoT solar cold-storage containers for Irish potato farmers in Bokkos and Mangu.',
-    giveAsk: 'Give: IoT firmware / ESP32 architecture help. Ask: Introductions to farm off-takers and cooperatives.',
-    location: 'Jos South (Vom/Bukuru)',
-    avatarColor: '#0D4734',
-    checkedInAt: new Date(Date.now() - 1000 * 60 * 45).toISOString()
-  },
-  {
-    id: 'att-2',
-    name: 'Gyang Kim',
-    title: 'Lead Systems Engineer @ PeakMesh',
-    tags: ['Infrastructure', 'AI & Software', 'DevOps & Cloud'],
-    bio: 'Setting up failover wireless mesh grids and solar battery backups for tech workspaces in Jos.',
-    giveAsk: 'Give: Network routing & cloud server hosting tips. Ask: Landlord permission for rooftop antennas in Rayfield.',
-    location: 'Rayfield, Jos',
-    avatarColor: '#166E52',
-    checkedInAt: new Date(Date.now() - 1000 * 60 * 30).toISOString()
-  },
-  {
-    id: 'att-3',
-    name: 'Bilikisu Ahmed',
-    title: 'Co-Founder @ JosGems Marketplace',
-    tags: ['Commerce & Export', 'Fintech & Payments', 'Product & UX Design'],
-    bio: 'Empowering Plateau artisanal mineral lapidaries with digital escrow verification and global DHL shipping.',
-    giveAsk: 'Give: Export customs compliance & UI/UX feedback. Ask: React Native developer for mobile checkout.',
-    location: 'Jos North / Central',
-    avatarColor: '#E5A93C',
-    checkedInAt: new Date(Date.now() - 1000 * 60 * 20).toISOString()
-  },
-  {
-    id: 'att-4',
-    name: 'Solomon Pwajok',
-    title: 'Full-Stack Dev & Unijos CS Mentor',
-    tags: ['Tech Talent & Education', 'AI & Software', 'Student / Builder'],
-    bio: 'Passionate about open-source developer tooling and training the next generation of Plateau tech builders.',
-    giveAsk: 'Give: Fullstack code reviews (React/Node/Python). Ask: Startup internships for top 10 graduating students.',
-    location: 'University of Jos / PLASU',
-    avatarColor: '#BF7E1D',
-    checkedInAt: new Date(Date.now() - 1000 * 60 * 10).toISOString()
-  }
-];
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavigationTab>('voting');
-  const [problems, setProblems] = useState<PlateauProblem[]>(defaultInitialProblems);
-  const [attendees, setAttendees] = useState<AttendeeProfile[]>(defaultInitialAttendees);
+  const [problems, setProblems] = useState<PlateauProblem[]>([]);
+  const [attendees, setAttendees] = useState<AttendeeProfile[]>([]);
   const [currentProfile, setCurrentProfile] = useState<AttendeeProfile | null>(null);
   const [isCheckInModalOpen, setIsCheckInModalOpen] = useState<boolean>(false);
   const [isAnalyticsModalOpen, setIsAnalyticsModalOpen] = useState<boolean>(false);
@@ -146,7 +30,7 @@ export default function App() {
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
 
   // Live room state that only the server owns
-  const [trusteeCandidates, setTrusteeCandidates] = useState<TrusteeCandidate[]>(INITIAL_TRUSTEE_CANDIDATES);
+  const [trusteeCandidates, setTrusteeCandidates] = useState<TrusteeCandidate[]>([]);
   const [liveCategories, setLiveCategories] = useState<CategoryInfo[]>([]);
   const [myVotes, setMyVotes] = useState<MyVotes>({ problems: [], squads: [], categories: [], trustees: [] });
 
