@@ -19,8 +19,9 @@ interface AudienceParticipationViewProps {
   currentProfile?: AttendeeProfile | null;
   myVotes?: MyVotes;
   sessionState?: RoomSessionState;
-  // Outside a host-driven round the room screen is look-only: the live record
-  // can be read, but nothing on it can be written.
+  // True outside a host-driven round. Voting is fully locked in that state;
+  // contributing content (pitching a problem, nominating a trustee) is still
+  // allowed in the phases that call for it - see the capability gates below.
   readOnly?: boolean;
   // The most recently archived round. Shown as a quiet summary so a phone that
   // was offline through the whole reveal window still learns what happened.
@@ -78,6 +79,13 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
   const [pitchDesc, setPitchDesc] = useState('');
   const [pitchCategory, setPitchCategory] = useState('Agro-Tech & Cold Chain');
 
+  // Trustee nomination from the floor
+  const [isNominateOpen, setIsNominateOpen] = useState(false);
+  const [nomineeName, setNomineeName] = useState('');
+  const [nomineeTitle, setNomineeTitle] = useState('');
+  const [nomineeWhy, setNomineeWhy] = useState('');
+  const [nomineeContact, setNomineeContact] = useState('');
+
   // Floating live emoji bursts
   const [reactionBursts, setReactionBursts] = useState<Array<{ id: string; emoji: string; x: number }>>([]);
 
@@ -128,51 +136,100 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
     return problems.filter(p => myVotes.squads.includes(p.id) || (currentProfile && p.collaborators.includes(currentProfile.name)));
   }, [problems, myVotes.squads, currentProfile]);
 
-  // ---- Read-only guards -------------------------------------------------
-  // Every write the room screen offers funnels through these, so a new button
-  // cannot accidentally bypass the lock.
+  // Lowest founding seat (1-12) with no nominee yet. A nomination posted
+  // against an occupied seat REPLACES its holder server-side, so the floor is
+  // only ever allowed to fill an empty one; null means all 12 are taken.
+  const nextFreeSeat = useMemo(() => {
+    const taken = new Set(trusteeCandidates.map(c => c.seatNumber));
+    for (let seat = 1; seat <= 12; seat++) {
+      if (!taken.has(seat)) return seat;
+    }
+    return null;
+  }, [trusteeCandidates]);
+
+  // ---- Capability gates -------------------------------------------------
+  // `readOnly` means "no host round is open". Voting stays entirely host-led
+  // in that state, but the room can still CONTRIBUTE content during the phases
+  // where contributing is the point of the phase.
+  //
+  // Every write the room screen offers funnels through the guards below, so a
+  // new button cannot accidentally bypass whichever lock governs it.
+  const phase = sessionState.activePhase;
+
+  // Upvotes, squad joins, sector votes and trustee endorsements: round-only.
+  const votingLocked = readOnly;
+
+  // Contribution: open in the phase that calls for it, plus free roam.
+  const canSubmitProblem = !readOnly || phase === 'problem_pitch' || phase === 'free_roam';
+  const canNominateTrustee = !readOnly || phase === 'trustee_election' || phase === 'free_roam';
+
   const blockedByRound = () => {
     sounds.playTapSound();
     onNotify({
       type: 'info',
       title: 'Voting is host-led',
-      message: 'This screen is live but read-only. The host opens a round when it is time to vote.',
+      message: 'Voting happens inside a host-opened round. The ballot takes over your screen when it opens.',
+      duration: 3500
+    });
+  };
+
+  const blockedForPhase = (what: string) => {
+    sounds.playTapSound();
+    onNotify({
+      type: 'info',
+      title: `${what} is closed right now`,
+      message: 'The host opens this later in the run of show. Everything on screen stays live meanwhile.',
       duration: 3500
     });
   };
 
   const guardedVoteProblem = (id: string, commit: boolean, name?: string) => {
-    if (readOnly) return blockedByRound();
+    if (votingLocked) return blockedByRound();
     onVoteProblem(id, commit, name);
   };
 
   const guardedVoteCategory = (categoryName: string) => {
-    if (readOnly) return blockedByRound();
+    if (votingLocked) return blockedByRound();
     onVoteCategory(categoryName);
   };
 
   const guardedVoteTrustee = (candidateId: string) => {
-    if (readOnly) return blockedByRound();
+    if (votingLocked) return blockedByRound();
     onVoteTrustee(candidateId);
   };
 
   const guardedOpenPitch = () => {
-    if (readOnly) return blockedByRound();
+    if (!canSubmitProblem) return blockedForPhase('Problem submission');
     setIsSubmitPitchOpen(true);
+  };
+
+  const guardedOpenNominate = () => {
+    if (!canNominateTrustee) return blockedForPhase('Trustee nomination');
+    if (nextFreeSeat === null) {
+      sounds.playTapSound();
+      return onNotify({
+        type: 'info',
+        title: 'All 12 trustee seats are filled',
+        message: 'Every founding seat already has a nominee. Speak to the host to swap one out.',
+        duration: 4000
+      });
+    }
+    setIsNominateOpen(true);
   };
 
   // Quick Submit Pitch Handler
   const handleQuickSubmitPitch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (readOnly) return blockedByRound();
+    if (!canSubmitProblem) return blockedForPhase('Problem submission');
     if (!pitchTitle.trim() || !pitchDesc.trim()) return;
 
     onSubmitProblem({
       title: pitchTitle.trim(),
       description: pitchDesc.trim(),
       category: pitchCategory,
-      author: currentProfile?.name || 'Jos Innovator',
-      isCommit: true
+      submittedBy: currentProfile?.name || 'Jos Innovator',
+      skillsNeeded: [],
+      autoCommit: true
     });
 
     sounds.playSquadJoinedSound();
@@ -184,6 +241,42 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
       type: 'problem_submitted',
       title: 'Problem Pitch Submitted!',
       message: 'Your challenge has been added to the room voting queue.',
+      duration: 4000
+    });
+  };
+
+  // Trustee Nomination Handler. The floor nominates a person into the lowest
+  // free founding seat; scoring, CAMA checks and confirmation stay with the
+  // host console, so we deliberately do not fake them from a phone.
+  const handleSubmitNomination = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canNominateTrustee) return blockedForPhase('Trustee nomination');
+    if (!nomineeName.trim() || nextFreeSeat === null) return;
+
+    onNominateTrustee({
+      seatNumber: nextFreeSeat,
+      name: nomineeName.trim(),
+      titleOrOrg: nomineeTitle.trim() || 'Founding Trustee Nominee',
+      bio: nomineeWhy.trim(),
+      // Optional, and never rendered back to the room: the server strips
+      // phoneOrContact out of every public trustee payload.
+      phoneOrContact: nomineeContact.trim(),
+      confirmed: false,
+      nominatedBy: currentProfile?.name || 'Assembly Attendee',
+      notes: 'Nominated from the audience floor.'
+    });
+
+    sounds.playSquadJoinedSound();
+    setNomineeName('');
+    setNomineeTitle('');
+    setNomineeWhy('');
+    setNomineeContact('');
+    setIsNominateOpen(false);
+
+    onNotify({
+      type: 'problem_submitted',
+      title: 'Trustee Nomination Submitted!',
+      message: `${nomineeName.trim()} has been put forward for Seat ${nextFreeSeat}.`,
       duration: 4000
     });
   };
@@ -295,20 +388,40 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
 
       {/* Main Content Body */}
       <main className="max-w-xl mx-auto w-full px-4 pt-4 space-y-4">
-        {/* Read-only notice: the room is live to watch, but voting is host-led */}
+        {/* Status notice. Voting is always host-led outside a round, but the
+            banner must be honest about what the floor CAN do in this phase. */}
         {readOnly && (
-          <div className="p-3 rounded-2xl bg-stone-100 border border-stone-300 flex items-start gap-2.5">
-            <Eye className="w-4 h-4 text-stone-500 shrink-0 mt-0.5" />
-            <div className="min-w-0">
-              <div className="text-[11px] font-mono font-bold uppercase tracking-wider text-stone-500">
-                Live room · view only
+          canSubmitProblem || canNominateTrustee ? (
+            <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-600/30 flex items-start gap-2.5">
+              <Megaphone className="w-4 h-4 text-[#0D4734] shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <div className="text-[11px] font-mono font-bold uppercase tracking-wider text-[#0D4734]">
+                  The floor is open
+                </div>
+                <p className="text-xs text-stone-700 mt-0.5">
+                  You can{' '}
+                  {canSubmitProblem && <strong>submit a Plateau problem</strong>}
+                  {canSubmitProblem && canNominateTrustee && ' and '}
+                  {canNominateTrustee && <strong>nominate a founding trustee</strong>}
+                  {' '}right now. Voting still happens inside a host-opened round — the ballot
+                  takes over your screen when it opens.
+                </p>
               </div>
-              <p className="text-xs text-stone-600 mt-0.5">
-                Everything here updates in real time. When it is time to vote, the host opens a
-                round and the ballot takes over your screen.
-              </p>
             </div>
-          </div>
+          ) : (
+            <div className="p-3 rounded-2xl bg-stone-100 border border-stone-300 flex items-start gap-2.5">
+              <Eye className="w-4 h-4 text-stone-500 shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <div className="text-[11px] font-mono font-bold uppercase tracking-wider text-stone-500">
+                  Live room · view only
+                </div>
+                <p className="text-xs text-stone-600 mt-0.5">
+                  Everything here updates in real time. When it is time to vote, the host opens a
+                  round and the ballot takes over your screen.
+                </p>
+              </div>
+            </div>
+          )
         )}
 
         {/* Host Live Broadcast Announcement Card (If active) */}
@@ -507,7 +620,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                 <div className="pt-2 grid grid-cols-2 gap-2 border-t border-stone-100">
                   <button
                     onClick={() => guardedVoteProblem(currentPitchProblem.id, false)}
-                    disabled={readOnly}
+                    disabled={votingLocked}
                     className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit py-2.5 rounded-xl border text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
                       myVotes.problems.includes(currentPitchProblem.id)
                         ? 'bg-[#0D4734] text-white border-[#0D4734]'
@@ -520,7 +633,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
 
                   <button
                     onClick={() => guardedVoteProblem(currentPitchProblem.id, true)}
-                    disabled={readOnly}
+                    disabled={votingLocked}
                     className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit py-2.5 rounded-xl text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
                       myVotes.squads.includes(currentPitchProblem.id)
                         ? 'bg-amber-500 text-stone-950 shadow-sm'
@@ -541,7 +654,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
             {/* Submit Quick 60s Pitch Button */}
             <button
               onClick={guardedOpenPitch}
-              disabled={readOnly}
+              disabled={!canSubmitProblem}
                     className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit w-full py-3 rounded-xl bg-white border-2 border-dashed border-[#0D4734]/50 hover:border-[#0D4734] text-[#0D4734] text-xs font-display font-black flex items-center justify-center gap-2 shadow-xs cursor-pointer active:scale-95 transition`}
             >
               <Plus className="w-4 h-4 text-emerald-700" />
@@ -569,7 +682,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                     <button
                       key={cat.name}
                       onClick={() => guardedVoteCategory(cat.name)}
-                      disabled={readOnly}
+                      disabled={votingLocked}
                       className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit px-3 py-1.5 rounded-xl border text-xs font-display font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
                         isVoted
                           ? 'bg-[#0D4734] text-white border-[#0D4734] shadow-xs scale-[1.02]'
@@ -663,7 +776,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                     <div className="grid grid-cols-2 gap-2 pt-2 border-t border-stone-100">
                       <button
                         onClick={() => guardedVoteProblem(prob.id, false)}
-                        disabled={readOnly}
+                        disabled={votingLocked}
                         className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit py-2 px-3 rounded-xl border text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
                           hasUpvoted
                             ? 'bg-[#0D4734] text-white border-[#0D4734]'
@@ -676,7 +789,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
 
                       <button
                         onClick={() => guardedVoteProblem(prob.id, true)}
-                        disabled={readOnly}
+                        disabled={votingLocked}
                         className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit py-2 px-3 rounded-xl text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
                           hasCommitted
                             ? 'bg-amber-500 text-stone-950 font-black shadow-xs'
@@ -749,7 +862,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                     {/* Endorse Button */}
                     <button
                       onClick={() => guardedVoteTrustee(cand.id)}
-                      disabled={readOnly}
+                      disabled={votingLocked}
                       className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit w-full py-2 rounded-xl text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
                         isEndorsed
                           ? 'bg-amber-400 text-stone-950 font-black shadow-xs'
@@ -763,6 +876,23 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                 );
               })}
             </div>
+
+            {/* Nominate from the floor. Endorsing stays round-only above; putting
+                a name forward is open for the whole election phase. */}
+            {nextFreeSeat !== null ? (
+              <button
+                onClick={guardedOpenNominate}
+                disabled={!canNominateTrustee}
+                className="disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit w-full py-3 rounded-xl bg-white border-2 border-dashed border-amber-600/60 hover:border-amber-600 text-amber-800 text-xs font-display font-black flex items-center justify-center gap-2 shadow-xs cursor-pointer active:scale-95 transition"
+              >
+                <Plus className="w-4 h-4 text-amber-700" />
+                <span>Nominate a Founding Trustee (Seat {nextFreeSeat})</span>
+              </button>
+            ) : (
+              <div className="p-4 text-center bg-white rounded-2xl border border-stone-200 text-stone-500 text-xs">
+                All 12 founding seats have a nominee. Speak to the host to put another name forward.
+              </div>
+            )}
           </div>
         )}
 
@@ -852,7 +982,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                       <span className="font-mono text-stone-500">{prob.upvotes} upvotes</span>
                       <button
                         onClick={() => guardedVoteProblem(prob.id, false)}
-                        disabled={readOnly}
+                        disabled={votingLocked}
                         className="disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit px-3 py-1 bg-[#0D4734] text-white rounded-lg font-bold text-xs"
                       >
                         Upvote
@@ -871,13 +1001,28 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                     <div className="text-[11px] text-stone-600">{cand.titleOrOrg}</div>
                     <button
                       onClick={() => guardedVoteTrustee(cand.id)}
-                      disabled={readOnly}
+                      disabled={votingLocked}
                       className="disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit mt-2 w-full py-1.5 bg-amber-400 text-stone-950 font-black rounded-lg text-xs"
                     >
                       Endorse ({cand.votes})
                     </button>
                   </div>
                 ))}
+
+                {nextFreeSeat !== null ? (
+                  <button
+                    onClick={guardedOpenNominate}
+                    disabled={!canNominateTrustee}
+                    className="disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit w-full py-3 rounded-xl bg-white border-2 border-dashed border-amber-600/60 hover:border-amber-600 text-amber-800 text-xs font-display font-black flex items-center justify-center gap-2 shadow-xs cursor-pointer active:scale-95 transition"
+                  >
+                    <Plus className="w-4 h-4 text-amber-700" />
+                    <span>Nominate a Founding Trustee (Seat {nextFreeSeat})</span>
+                  </button>
+                ) : (
+                  <div className="p-4 text-center bg-white rounded-2xl border border-stone-200 text-stone-500 text-xs">
+                    All 12 founding seats have a nominee. Speak to the host to put another name forward.
+                  </div>
+                )}
               </div>
             )}
 
@@ -1009,6 +1154,104 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                   className="px-5 py-2 rounded-xl bg-[#0D4734] hover:bg-[#166E52] text-white text-xs font-display font-black cursor-pointer shadow-sm active:scale-95"
                 >
                   Submit Challenge
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Nominate Trustee Modal */}
+      {isNominateOpen && nextFreeSeat !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs">
+          <div className="bg-[#FAF6EE] rounded-2xl max-w-md w-full p-5 shadow-2xl border border-emerald-900/20 text-stone-900 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-base font-display font-black text-[#0D4734]">
+                Nominate a Founding Trustee
+              </h3>
+              <button
+                onClick={() => setIsNominateOpen(false)}
+                className="p-1 rounded-lg hover:bg-stone-200 text-stone-500 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-[11px] text-stone-600 mb-3 leading-relaxed">
+              Putting a name forward for <strong>Seat {nextFreeSeat}</strong> of the 12 CAMA 2020
+              statutory trustees. The host verifies scoring and eligibility in the console.
+            </p>
+
+            <form onSubmit={handleSubmitNomination} className="space-y-3">
+              <div>
+                <label className="block text-xs font-display font-bold uppercase text-stone-700 mb-1">
+                  Nominee Full Name
+                </label>
+                <input
+                  type="text"
+                  value={nomineeName}
+                  onChange={e => setNomineeName(e.target.value)}
+                  placeholder="e.g. Amina Bature"
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-stone-300 bg-white text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-[#0D4734]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-display font-bold uppercase text-stone-700 mb-1">
+                  Role or Organisation <span className="text-stone-400 font-mono normal-case">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={nomineeTitle}
+                  onChange={e => setNomineeTitle(e.target.value)}
+                  placeholder="e.g. Founder, Jos Agro Cooperative"
+                  className="w-full px-3 py-2 rounded-xl border border-stone-300 bg-white text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-[#0D4734]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-display font-bold uppercase text-stone-700 mb-1">
+                  Why This Person <span className="text-stone-400 font-mono normal-case">(optional)</span>
+                </label>
+                <textarea
+                  value={nomineeWhy}
+                  onChange={e => setNomineeWhy(e.target.value)}
+                  rows={3}
+                  placeholder="What do they reliably deliver, and which doors do they open for Tin City Founders?"
+                  className="w-full px-3 py-2 rounded-xl border border-stone-300 bg-white text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-[#0D4734] resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-display font-bold uppercase text-stone-700 mb-1">
+                  Contact for the Host <span className="text-stone-400 font-mono normal-case">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={nomineeContact}
+                  onChange={e => setNomineeContact(e.target.value)}
+                  placeholder="Phone or email, only if you have their permission"
+                  className="w-full px-3 py-2 rounded-xl border border-stone-300 bg-white text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-[#0D4734]"
+                />
+                <p className="text-[10px] text-stone-500 mt-1 leading-relaxed">
+                  Goes to the host console only — contact details are never shown on the room screen.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-stone-200">
+                <button
+                  type="button"
+                  onClick={() => setIsNominateOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-stone-600 hover:bg-stone-200 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-[#0D4734] hover:bg-[#166E52] text-white text-xs font-display font-black cursor-pointer shadow-sm active:scale-95"
+                >
+                  Submit Nomination
                 </button>
               </div>
             </form>

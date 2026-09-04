@@ -804,6 +804,53 @@ export default function App() {
     }
   };
 
+  // Nominate a founding trustee (audience floor + console share this path).
+  // This only puts a name into a seat - endorsing stays host-driven.
+  const handleNominateTrustee = async (data: {
+    seatNumber: number;
+    name: string;
+    titleOrOrg?: string;
+    bio?: string;
+    phoneOrContact?: string;
+    confirmed?: boolean;
+    nominatedBy?: string;
+    notes?: string;
+  }) => {
+    const nominator = data.nominatedBy || currentProfile?.name || 'Assembly Attendee';
+
+    try {
+      const res = await fetch('/api/trustees/nominate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...data, nominatedBy: nominator })
+      });
+
+      if (res.ok) {
+        const payload = await res.json();
+        if (payload.success) {
+          if (payload.candidates) setTrusteeCandidates(payload.candidates);
+          if (payload.myVotes) applyMyVotes(payload.myVotes);
+          return;
+        }
+      }
+
+      addToast({
+        type: 'info',
+        title: 'Nomination not saved',
+        message: 'The room server rejected that nomination. Try again, or ask the host to add it.',
+        duration: 4500
+      });
+    } catch (err) {
+      console.error('Failed to nominate trustee:', err);
+      addToast({
+        type: 'info',
+        title: 'Nomination not saved',
+        message: 'Lost connection to the room server. Try again once you are reconnected.',
+        duration: 4500
+      });
+    }
+  };
+
   // Add new Plateau problem / Topic proposal
   const handleAddProblem = async (newProbData: {
     title: string;
@@ -974,7 +1021,9 @@ export default function App() {
             />
           ) : (
           <AudienceParticipationView
-            /* Idle room screen is look-only; all voting happens inside a host round. */
+            /* Idle room screen: all VOTING happens inside a host round, but the
+               floor can still pitch problems and nominate trustees in the
+               phases where that is the point. */
             readOnly
             sessionState={roomSessionState}
             lastRound={lastRound}
@@ -988,6 +1037,7 @@ export default function App() {
             onVoteCategory={handleVoteCategory}
             onVoteTrustee={handleVoteTrustee}
             onSubmitProblem={handleAddProblem}
+            onNominateTrustee={handleNominateTrustee}
             onOpenCheckIn={() => setIsCheckInModalOpen(true)}
             onSaveProfile={handleSaveProfile}
             onSwitchToFullConsole={() => handleToggleAudienceMode(false)}
