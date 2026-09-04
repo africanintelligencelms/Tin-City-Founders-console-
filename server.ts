@@ -649,6 +649,56 @@ let activityLogs: Array<{
 // Room Session Phase / Host Conductor State
 type RoomPhase = "welcome" | "problem_pitch" | "voting" | "trustee_election" | "squad_commit" | "free_roam";
 
+// -------------------------------------------------------------
+// Voting Rounds — host-driven ballots layered on top of phases
+// -------------------------------------------------------------
+type RoundKind = "problem" | "category" | "trustee";
+type RoundStatus = "open" | "revealed";
+
+interface RoundOption {
+  id: string;
+  label: string;
+  sublabel?: string;
+}
+
+interface RoundResultEntry {
+  optionId: string;
+  label: string;
+  sublabel?: string;
+  votes: number;
+  share: number;
+}
+
+interface VotingRound {
+  id: string;
+  kind: RoundKind;
+  title: string;
+  prompt?: string;
+  status: RoundStatus;
+  options: RoundOption[];
+  maxSelections: number;
+  ballotsCast: number;
+  openedAt: number;
+  closedAt?: number;
+  results?: RoundResultEntry[];
+}
+
+// One ballot per voter per round. Kept separate from the ambient upvote records
+// so opening/closing rounds never disturbs the running problem/trustee tallies.
+interface RoundBallot {
+  roundId: string;
+  voterId: string;
+  voterName?: string;
+  selections: string[];
+  ts: number;
+}
+
+let activeRound: VotingRound | null = null;
+let roundBallots: RoundBallot[] = [];
+// Completed rounds, newest first, capped so the state file stays small.
+let roundHistory: VotingRound[] = [];
+let revealTimer: NodeJS.Timeout | null = null;
+
 interface RoomSessionState {
   activePhase: RoomPhase;
   phaseTitle: string;
@@ -660,6 +710,7 @@ interface RoomSessionState {
   } | null;
   pinnedProblemId?: string;
   allowAudienceNavigation: boolean;
+  activeRound?: VotingRound | null;
   updatedAt: number;
 }
 
@@ -669,6 +720,7 @@ let roomSessionState: RoomSessionState = {
   announcement: null,
   pinnedProblemId: undefined,
   allowAudienceNavigation: true,
+  activeRound: null,
   updatedAt: Date.now()
 };
 
@@ -686,6 +738,11 @@ try {
     if (parsed.roomSessionState && typeof parsed.roomSessionState === "object") {
       roomSessionState = { ...roomSessionState, ...parsed.roomSessionState };
     }
+    if (parsed.roundBallots && Array.isArray(parsed.roundBallots)) roundBallots = parsed.roundBallots;
+    if (parsed.roundHistory && Array.isArray(parsed.roundHistory)) roundHistory = parsed.roundHistory;
+    if (parsed.activeRound && typeof parsed.activeRound === "object") activeRound = parsed.activeRound;
+    // A round that survived a restart is re-attached to the session state below.
+    roomSessionState.activeRound = activeRound;
     console.log(`Loaded room state from disk cache (${voteRecords.length} vote records).`);
   }
 } catch (e) {
@@ -707,6 +764,9 @@ function persistState() {
       activityLogs,
       voteRecords,
       roomSessionState,
+      activeRound,
+      roundBallots,
+      roundHistory,
       lastSaved: Date.now()
     };
     // Atomic write: a crash mid-write can never leave a truncated state file behind.
@@ -968,6 +1028,225 @@ app.post("/api/session/react", (req, res) => {
 
   broadcastSSE("AUDIENCE_REACTION", reaction);
   res.json({ success: true, reaction });
+});
+
+// ----------------- VOTING ROUND ENDPOINTS -----------------
+
+const ROUND_KINDS: RoundKind[] = ["problem", "category", "trustee"];
+const DEFAULT_REVEAL_MS = 30000;
+
+// Build the candidate pool for a ballot kind. optionIds narrows it; empty means "everything".
+function buildRoundOptions(kind: RoundKind, optionIds?: string[]): RoundOption[] {
+  const wanted = Array.isArray(optionIds) && optionIds.length ? new Set(optionIds.map(String)) : null;
+
+  if (kind === "problem") {
+    return problems
+      .filter(p => !wanted || wanted.has(p.id))
+      .map(p => ({ id: p.id, label: p.title, sublabel: p.category }));
+  }
+  if (kind === "category") {
+    return Object.entries(categoriesStore)
+      .filter(([name]) => !wanted || wanted.has(name))
+      .map(([name, data]) => ({ id: name, label: name, sublabel: data.description }));
+  }
+  return trusteeCandidates
+    .filter(c => !wanted || wanted.has(c.id))
+    .map(c => ({ id: c.id, label: c.name, sublabel: c.titleOrOrg }));
+}
+
+// Tally is derived from the ballots, never incremented in place.
+function tallyRound(round: VotingRound): RoundResultEntry[] {
+  const ballots = roundBallots.filter(b => b.roundId === round.id);
+  const counts = new Map<string, number>();
+  for (const b of ballots) {
+    for (const optionId of b.selections) {
+      counts.set(optionId, (counts.get(optionId) || 0) + 1);
+    }
+  }
+  const denominator = ballots.length || 1;
+  return round.options
+    .map(o => ({
+      optionId: o.id,
+      label: o.label,
+      sublabel: o.sublabel,
+      votes: counts.get(o.id) || 0,
+      share: (counts.get(o.id) || 0) / denominator
+    }))
+    .sort((a, b) => b.votes - a.votes);
+}
+
+function syncRoundToSession() {
+  roomSessionState.activeRound = activeRound;
+  roomSessionState.updatedAt = Date.now();
+}
+
+function ballotFor(roundId: string | null, voterId: string) {
+  if (!roundId) return { roundId: null, selections: [] as string[], hasVoted: false };
+  const b = roundBallots.find(r => r.roundId === roundId && r.voterId === voterId);
+  return { roundId, selections: b ? b.selections : [], hasVoted: !!b };
+}
+
+// Current round plus what this device has already submitted.
+app.get("/api/round", (req, res) => {
+  res.json({
+    success: true,
+    round: activeRound,
+    myBallot: ballotFor(activeRound?.id ?? null, req.voterId),
+    history: roundHistory.slice(0, 10)
+  });
+});
+
+// Host opens a round. The host picks the ballot type per round.
+app.post("/api/round/open", (req, res) => {
+  const { kind, title, prompt, optionIds, maxSelections } = req.body || {};
+
+  if (!ROUND_KINDS.includes(kind)) {
+    return res.status(400).json({ success: false, error: `kind must be one of: ${ROUND_KINDS.join(", ")}` });
+  }
+  if (activeRound && activeRound.status === "open") {
+    return res.status(409).json({ success: false, error: "A round is already open. Close it first.", round: activeRound });
+  }
+
+  const options = buildRoundOptions(kind, optionIds);
+  if (options.length < 2) {
+    return res.status(400).json({ success: false, error: "A round needs at least 2 options on the ballot." });
+  }
+
+  if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
+
+  const cap = Number(maxSelections);
+  activeRound = {
+    id: `round-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    kind,
+    title: title ? String(title).trim().slice(0, 120) : `Live ${kind} vote`,
+    prompt: prompt ? String(prompt).trim().slice(0, 240) : undefined,
+    status: "open",
+    options,
+    maxSelections: Number.isFinite(cap) && cap >= 1 ? Math.min(Math.floor(cap), options.length) : 1,
+    ballotsCast: 0,
+    openedAt: Date.now()
+  };
+
+  syncRoundToSession();
+  persistState();
+
+  broadcastSSE("ROUND_OPENED", { round: activeRound });
+  broadcastStateUpdate("round_opened", `Host opened a ${kind} round: "${activeRound.title}"`, "Host Conductor");
+
+  res.json({ success: true, round: activeRound });
+});
+
+// A participant submits their ballot. One ballot per device per round; re-submitting replaces it.
+app.post("/api/round/vote", (req, res) => {
+  const { roundId, selections, voterName } = req.body || {};
+
+  if (!activeRound || activeRound.status !== "open") {
+    return res.status(409).json({ success: false, error: "No round is open right now.", round: activeRound });
+  }
+  if (roundId && roundId !== activeRound.id) {
+    return res.status(409).json({ success: false, error: "That round has already closed.", round: activeRound });
+  }
+
+  const raw = Array.isArray(selections) ? selections.map(String) : [];
+  const valid = new Set(activeRound.options.map(o => o.id));
+  const picked = [...new Set(raw)].filter(id => valid.has(id));
+
+  if (!picked.length) {
+    return res.status(400).json({ success: false, error: "Pick at least one option on the ballot." });
+  }
+  if (picked.length > activeRound.maxSelections) {
+    return res.status(400).json({
+      success: false,
+      error: `This round allows at most ${activeRound.maxSelections} selection(s).`
+    });
+  }
+
+  const existing = roundBallots.find(b => b.roundId === activeRound!.id && b.voterId === req.voterId);
+  if (existing) {
+    existing.selections = picked;
+    existing.ts = Date.now();
+  } else {
+    roundBallots.push({
+      roundId: activeRound.id,
+      voterId: req.voterId,
+      voterName: voterName ? String(voterName).trim().slice(0, 80) : undefined,
+      selections: picked,
+      ts: Date.now()
+    });
+  }
+
+  activeRound.ballotsCast = roundBallots.filter(b => b.roundId === activeRound!.id).length;
+  syncRoundToSession();
+  persistState();
+
+  // Only the running total goes out live — never the per-option tally, which would
+  // let the room watch the result form and bias later voters.
+  broadcastSSE("ROUND_BALLOT_CAST", { roundId: activeRound.id, ballotsCast: activeRound.ballotsCast });
+
+  res.json({
+    success: true,
+    round: activeRound,
+    myBallot: ballotFor(activeRound.id, req.voterId)
+  });
+});
+
+// Host closes the round: tally, reveal, and schedule the return to idle.
+app.post("/api/round/close", (req, res) => {
+  if (!activeRound) {
+    return res.status(409).json({ success: false, error: "There is no round to close." });
+  }
+  if (activeRound.status === "revealed") {
+    return res.json({ success: true, round: activeRound });
+  }
+
+  activeRound.results = tallyRound(activeRound);
+  activeRound.ballotsCast = roundBallots.filter(b => b.roundId === activeRound!.id).length;
+  activeRound.status = "revealed";
+  activeRound.closedAt = Date.now();
+
+  syncRoundToSession();
+  persistState();
+
+  broadcastSSE("ROUND_CLOSED", { round: activeRound });
+  broadcastStateUpdate(
+    "round_closed",
+    `Round closed: "${activeRound.title}" — ${activeRound.ballotsCast} ballot(s) cast`,
+    "Host Conductor"
+  );
+
+  // Reveal, then return to idle. The host can also clear it early.
+  const holdMs = Number(req.body?.revealMs);
+  const revealMs = Number.isFinite(holdMs) && holdMs > 0 ? holdMs : DEFAULT_REVEAL_MS;
+  const closingId = activeRound.id;
+  if (revealTimer) clearTimeout(revealTimer);
+  revealTimer = setTimeout(() => {
+    if (activeRound?.id === closingId && activeRound.status === "revealed") {
+      archiveActiveRound();
+    }
+  }, revealMs);
+
+  res.json({ success: true, round: activeRound, revealMs });
+});
+
+function archiveActiveRound() {
+  if (!activeRound) return;
+  roundHistory.unshift(activeRound);
+  if (roundHistory.length > 20) roundHistory.length = 20;
+  const clearedId = activeRound.id;
+  activeRound = null;
+  if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
+  syncRoundToSession();
+  persistState();
+  broadcastSSE("ROUND_CLEARED", { roundId: clearedId });
+}
+
+// Host dismisses the results early and sends every phone back to the room view.
+app.delete("/api/round", (_req, res) => {
+  if (!activeRound) {
+    return res.json({ success: true, round: null });
+  }
+  archiveActiveRound();
+  res.json({ success: true, round: null, history: roundHistory.slice(0, 10) });
 });
 
 // ----------------- VOTER ENDPOINTS -----------------

@@ -157,12 +157,59 @@ export interface LiveReactionEvent {
   timestamp: number;
 }
 
+// -------------------------------------------------------------
+// Voting Rounds — host-driven ballots layered on top of phases
+// -------------------------------------------------------------
+
+// What is on the ballot. The host picks the type when opening the round.
+export type RoundKind = 'problem' | 'category' | 'trustee';
+
+export interface RoundOption {
+  id: string;
+  label: string;
+  sublabel?: string;
+}
+
+export interface RoundResultEntry {
+  optionId: string;
+  label: string;
+  sublabel?: string;
+  votes: number;
+  share: number; // 0..1 of ballots cast
+}
+
+export type RoundStatus = 'open' | 'revealed';
+
+export interface VotingRound {
+  id: string;
+  kind: RoundKind;
+  title: string;
+  prompt?: string;
+  status: RoundStatus;
+  options: RoundOption[];
+  maxSelections: number;
+  ballotsCast: number;
+  openedAt: number;
+  closedAt?: number;
+  // Populated only once the host closes the round.
+  results?: RoundResultEntry[];
+}
+
+// What this device has done in the active round.
+export interface MyRoundBallot {
+  roundId: string | null;
+  selections: string[];
+  hasVoted: boolean;
+}
+
 export interface RoomSessionState {
   activePhase: RoomPhase;
   phaseTitle?: string;
   announcement?: LiveAnnouncement | null;
   pinnedProblemId?: string;
   allowAudienceNavigation: boolean;
+  // Null outside a round; drives the ballot/results takeover on participant phones.
+  activeRound?: VotingRound | null;
   updatedAt: number;
 }
 

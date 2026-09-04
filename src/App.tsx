@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { NavigationTab, PlateauProblem, AttendeeProfile, ToastNotification, RoomSessionState } from './types';
-import type { TrusteeCandidate, CategoryInfo, MyVotes } from './types';
+import type { TrusteeCandidate, CategoryInfo, MyVotes, MyRoundBallot, RoundKind } from './types';
 import { INITIAL_TRUSTEE_CANDIDATES } from './data/trusteeSeatsData';
 import { Header } from './components/Header';
 import { ProblemVoting } from './components/ProblemVoting';
@@ -16,6 +16,7 @@ import { VotingParticleProvider } from './components/VotingParticleManager';
 import { RoomLiveAnalyticsModal } from './components/RoomLiveAnalyticsModal';
 import { AudienceParticipationView } from './components/AudienceParticipationView';
 import { StageConductorBar } from './components/StageConductorBar';
+import { RoundTakeover } from './components/RoundTakeover';
 
 // Default initial problems in case server endpoint is loading
 const defaultInitialProblems: PlateauProblem[] = [
@@ -166,7 +167,15 @@ export default function App() {
     phaseTitle: 'Live Plateau Problem Voting & Squad Formation',
     announcement: null,
     allowAudienceNavigation: true,
+    activeRound: null,
     updatedAt: Date.now()
+  });
+
+  // What this device has submitted in the active round (server is source of truth).
+  const [myRoundBallot, setMyRoundBallot] = useState<MyRoundBallot>({
+    roundId: null,
+    selections: [],
+    hasVoted: false
   });
 
   const handleToggleAudienceMode = (enableAudience: boolean) => {
@@ -226,6 +235,20 @@ export default function App() {
     }
   };
 
+  // Restores this device's ballot after a refresh or reconnect mid-round.
+  const refreshMyRound = async () => {
+    try {
+      const res = await fetch('/api/round');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.success) return;
+      setRoomSessionState(prev => ({ ...prev, activeRound: data.round ?? null }));
+      if (data.myBallot) setMyRoundBallot(data.myBallot);
+    } catch (e) {
+      // Offline: the SSE snapshot will fill this in when the link comes back
+    }
+  };
+
   // Apply a full room snapshot (SSE INIT_SYNC / STATE_UPDATE or REST /api/live/sync)
   const applyServerSnapshot = (data: any) => {
     if (!data) return;
@@ -251,6 +274,60 @@ export default function App() {
     } catch (err) {
       console.error('Failed to update session state:', err);
     }
+  };
+
+  // ---------------- Voting round lifecycle ----------------
+
+  const postRound = async (path: string, method: string, body?: any) => {
+    const res = await fetch(path, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      throw new Error(data.error || `Round request failed (${res.status})`);
+    }
+    return data;
+  };
+
+  const applyRound = (round: RoomSessionState['activeRound']) => {
+    setRoomSessionState(prev => ({ ...prev, activeRound: round ?? null }));
+  };
+
+  const handleOpenRound = async (opts: { kind: RoundKind; title: string; maxSelections: number }) => {
+    const data = await postRound('/api/round/open', 'POST', opts);
+    applyRound(data.round);
+    // A fresh round means this device has not voted yet.
+    setMyRoundBallot({ roundId: data.round?.id ?? null, selections: [], hasVoted: false });
+  };
+
+  const handleCloseRound = async () => {
+    const data = await postRound('/api/round/close', 'POST', {});
+    applyRound(data.round);
+  };
+
+  const handleClearRound = async () => {
+    await postRound('/api/round', 'DELETE');
+    applyRound(null);
+    setMyRoundBallot({ roundId: null, selections: [], hasVoted: false });
+  };
+
+  const handleSubmitBallot = async (selections: string[]) => {
+    const roundId = roomSessionState.activeRound?.id;
+    const data = await postRound('/api/round/vote', 'POST', {
+      roundId,
+      selections,
+      voterName: currentProfile?.name
+    });
+    applyRound(data.round);
+    if (data.myBallot) setMyRoundBallot(data.myBallot);
+    addToast({
+      type: 'success',
+      title: 'Ballot submitted',
+      message: 'Your vote is counted. You can change it until the host closes the round.',
+      duration: 3500
+    });
   };
 
   const handleBroadcastAnnouncement = async (message: string) => {
@@ -295,6 +372,7 @@ export default function App() {
 
     // Then let the server correct the local cache
     refreshMyVotes();
+    refreshMyRound();
   }, []);
 
   // Real-Time Server-Sent Events (SSE) Stream Connection
@@ -381,6 +459,62 @@ export default function App() {
           setRoomSessionState(prev => ({ ...prev, announcement: null }));
         });
 
+        // ---- Voting round lifecycle events ----
+
+        eventSource.addEventListener('ROUND_OPENED', (e: MessageEvent) => {
+          if (isCancelled) return;
+          try {
+            const data = JSON.parse(e.data);
+            if (!data.round) return;
+            setRoomSessionState(prev => ({ ...prev, activeRound: data.round }));
+            setMyRoundBallot({ roundId: data.round.id, selections: [], hasVoted: false });
+            addToast({
+              type: 'info',
+              title: 'Voting round open',
+              message: data.round.title,
+              duration: 5000
+            });
+          } catch (err) {
+            console.error('Failed to parse round opened event:', err);
+          }
+        });
+
+        // Running total only — per-option tallies stay hidden until the reveal.
+        eventSource.addEventListener('ROUND_BALLOT_CAST', (e: MessageEvent) => {
+          if (isCancelled) return;
+          try {
+            const data = JSON.parse(e.data);
+            setRoomSessionState(prev =>
+              prev.activeRound && prev.activeRound.id === data.roundId
+                ? { ...prev, activeRound: { ...prev.activeRound, ballotsCast: data.ballotsCast } }
+                : prev
+            );
+          } catch (err) {}
+        });
+
+        eventSource.addEventListener('ROUND_CLOSED', (e: MessageEvent) => {
+          if (isCancelled) return;
+          try {
+            const data = JSON.parse(e.data);
+            if (!data.round) return;
+            setRoomSessionState(prev => ({ ...prev, activeRound: data.round }));
+            addToast({
+              type: 'success',
+              title: 'Round closed',
+              message: `${data.round.ballotsCast} ballot(s) counted — results are up.`,
+              duration: 5000
+            });
+          } catch (err) {
+            console.error('Failed to parse round closed event:', err);
+          }
+        });
+
+        eventSource.addEventListener('ROUND_CLEARED', () => {
+          if (isCancelled) return;
+          setRoomSessionState(prev => ({ ...prev, activeRound: null }));
+          setMyRoundBallot({ roundId: null, selections: [], hasVoted: false });
+        });
+
         // Audience live reaction bubble event
         eventSource.addEventListener('AUDIENCE_REACTION', (e: MessageEvent) => {
           if (isCancelled) return;
@@ -438,6 +572,7 @@ export default function App() {
         if (data.success) {
           applyServerSnapshot(data);
           refreshMyVotes();
+          refreshMyRound();
           addToast({
             type: 'success',
             title: 'Live Room Resynchronized',
@@ -816,7 +951,18 @@ export default function App() {
     <VotingParticleProvider>
       {isAudienceMode ? (
         <div className="min-h-screen bg-[#071912] text-[#FAF6EE]">
+          {/* A live round takes the phone over; outside one, the room view is the idle screen. */}
+          {roomSessionState.activeRound ? (
+            <RoundTakeover
+              round={roomSessionState.activeRound}
+              myBallot={myRoundBallot}
+              onSubmitBallot={handleSubmitBallot}
+              voterName={currentProfile?.name}
+            />
+          ) : (
           <AudienceParticipationView
+            /* Idle room screen is look-only; all voting happens inside a host round. */
+            readOnly
             sessionState={roomSessionState}
             problems={problems}
             attendees={attendees}
@@ -836,6 +982,7 @@ export default function App() {
             onReconnect={handleManualReconnect}
             onNotify={addToast}
           />
+          )}
 
           {/* Profile / Check-in Modal */}
           <FounderCheckInModal
@@ -878,6 +1025,10 @@ export default function App() {
               onBroadcastAnnouncement={handleBroadcastAnnouncement}
               connectedClientsCount={attendees.length}
               isCompact={true}
+              onNotify={addToast}
+              onOpenRound={handleOpenRound}
+              onCloseRound={handleCloseRound}
+              onClearRound={handleClearRound}
             />
           </div>
 

@@ -3,7 +3,7 @@ import {
   Vote, Users, Sparkles, Plus, ThumbsUp, CheckCircle2, ChevronRight,
   ExternalLink, Search, Filter, Megaphone, Send, Award, Handshake, 
   MapPin, Shield, Check, Flame, Lightbulb, Heart, ArrowUpRight, Compass,
-  Radio, X, RefreshCw, Smartphone, Laptop
+  Radio, X, RefreshCw, Smartphone, Laptop, Eye
 } from 'lucide-react';
 import { 
   PlateauProblem, AttendeeProfile, TrusteeCandidate, CategoryInfo, 
@@ -19,6 +19,9 @@ interface AudienceParticipationViewProps {
   currentProfile?: AttendeeProfile | null;
   myVotes?: MyVotes;
   sessionState?: RoomSessionState;
+  // Outside a host-driven round the room screen is look-only: the live record
+  // can be read, but nothing on it can be written.
+  readOnly?: boolean;
   syncStatus?: 'connected' | 'connecting' | 'reconnecting' | 'offline';
   latencyMs?: number | null;
   onVoteProblem?: (id: string, commit: boolean, name?: string) => void;
@@ -48,6 +51,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
     allowAudienceNavigation: true,
     updatedAt: Date.now()
   },
+  readOnly = false,
   syncStatus = 'connected',
   latencyMs = 18,
   onVoteProblem = (_id: string, _commit: boolean, _name?: string) => {},
@@ -120,9 +124,43 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
     return problems.filter(p => myVotes.squads.includes(p.id) || (currentProfile && p.collaborators.includes(currentProfile.name)));
   }, [problems, myVotes.squads, currentProfile]);
 
+  // ---- Read-only guards -------------------------------------------------
+  // Every write the room screen offers funnels through these, so a new button
+  // cannot accidentally bypass the lock.
+  const blockedByRound = () => {
+    sounds.playTapSound();
+    onNotify({
+      type: 'info',
+      title: 'Voting is host-led',
+      message: 'This screen is live but read-only. The host opens a round when it is time to vote.',
+      duration: 3500
+    });
+  };
+
+  const guardedVoteProblem = (id: string, commit: boolean, name?: string) => {
+    if (readOnly) return blockedByRound();
+    onVoteProblem(id, commit, name);
+  };
+
+  const guardedVoteCategory = (categoryName: string) => {
+    if (readOnly) return blockedByRound();
+    onVoteCategory(categoryName);
+  };
+
+  const guardedVoteTrustee = (candidateId: string) => {
+    if (readOnly) return blockedByRound();
+    onVoteTrustee(candidateId);
+  };
+
+  const guardedOpenPitch = () => {
+    if (readOnly) return blockedByRound();
+    setIsSubmitPitchOpen(true);
+  };
+
   // Quick Submit Pitch Handler
   const handleQuickSubmitPitch = (e: React.FormEvent) => {
     e.preventDefault();
+    if (readOnly) return blockedByRound();
     if (!pitchTitle.trim() || !pitchDesc.trim()) return;
 
     onSubmitProblem({
@@ -253,6 +291,22 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
 
       {/* Main Content Body */}
       <main className="max-w-xl mx-auto w-full px-4 pt-4 space-y-4">
+        {/* Read-only notice: the room is live to watch, but voting is host-led */}
+        {readOnly && (
+          <div className="p-3 rounded-2xl bg-stone-100 border border-stone-300 flex items-start gap-2.5">
+            <Eye className="w-4 h-4 text-stone-500 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <div className="text-[11px] font-mono font-bold uppercase tracking-wider text-stone-500">
+                Live room · view only
+              </div>
+              <p className="text-xs text-stone-600 mt-0.5">
+                Everything here updates in real time. When it is time to vote, the host opens a
+                round and the ballot takes over your screen.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Host Live Broadcast Announcement Card (If active) */}
         {sessionState.announcement && (
           <div className="p-3.5 rounded-2xl bg-amber-500 text-stone-950 shadow-lg border-2 border-amber-300 animate-in fade-in slide-in-from-top-4 duration-300">
@@ -411,8 +465,9 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                 {/* 1-Tap Fast Pitch Support Buttons */}
                 <div className="pt-2 grid grid-cols-2 gap-2 border-t border-stone-100">
                   <button
-                    onClick={() => onVoteProblem(currentPitchProblem.id, false)}
-                    className={`py-2.5 rounded-xl border text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
+                    onClick={() => guardedVoteProblem(currentPitchProblem.id, false)}
+                    disabled={readOnly}
+                    className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit py-2.5 rounded-xl border text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
                       myVotes.problems.includes(currentPitchProblem.id)
                         ? 'bg-[#0D4734] text-white border-[#0D4734]'
                         : 'bg-stone-100 hover:bg-stone-200 text-stone-800 border-stone-300'
@@ -423,8 +478,9 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                   </button>
 
                   <button
-                    onClick={() => onVoteProblem(currentPitchProblem.id, true)}
-                    className={`py-2.5 rounded-xl text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
+                    onClick={() => guardedVoteProblem(currentPitchProblem.id, true)}
+                    disabled={readOnly}
+                    className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit py-2.5 rounded-xl text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
                       myVotes.squads.includes(currentPitchProblem.id)
                         ? 'bg-amber-500 text-stone-950 shadow-sm'
                         : 'bg-[#0D4734] hover:bg-[#166E52] text-white shadow-sm'
@@ -443,8 +499,9 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
 
             {/* Submit Quick 60s Pitch Button */}
             <button
-              onClick={() => setIsSubmitPitchOpen(true)}
-              className="w-full py-3 rounded-xl bg-white border-2 border-dashed border-[#0D4734]/50 hover:border-[#0D4734] text-[#0D4734] text-xs font-display font-black flex items-center justify-center gap-2 shadow-xs cursor-pointer active:scale-95 transition"
+              onClick={guardedOpenPitch}
+              disabled={readOnly}
+                    className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit w-full py-3 rounded-xl bg-white border-2 border-dashed border-[#0D4734]/50 hover:border-[#0D4734] text-[#0D4734] text-xs font-display font-black flex items-center justify-center gap-2 shadow-xs cursor-pointer active:scale-95 transition`}
             >
               <Plus className="w-4 h-4 text-emerald-700" />
               <span>Submit a 60-Second Plateau Problem Pitch</span>
@@ -470,8 +527,9 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                   return (
                     <button
                       key={cat.name}
-                      onClick={() => onVoteCategory(cat.name)}
-                      className={`px-3 py-1.5 rounded-xl border text-xs font-display font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                      onClick={() => guardedVoteCategory(cat.name)}
+                      disabled={readOnly}
+                      className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit px-3 py-1.5 rounded-xl border text-xs font-display font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
                         isVoted
                           ? 'bg-[#0D4734] text-white border-[#0D4734] shadow-xs scale-[1.02]'
                           : 'bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200'
@@ -563,8 +621,9 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                     {/* Action Buttons: 1-Tap Upvote & 1-Tap Squad Commit */}
                     <div className="grid grid-cols-2 gap-2 pt-2 border-t border-stone-100">
                       <button
-                        onClick={() => onVoteProblem(prob.id, false)}
-                        className={`py-2 px-3 rounded-xl border text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
+                        onClick={() => guardedVoteProblem(prob.id, false)}
+                        disabled={readOnly}
+                        className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit py-2 px-3 rounded-xl border text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
                           hasUpvoted
                             ? 'bg-[#0D4734] text-white border-[#0D4734]'
                             : 'bg-stone-50 hover:bg-stone-100 text-stone-800 border-stone-200'
@@ -575,8 +634,9 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                       </button>
 
                       <button
-                        onClick={() => onVoteProblem(prob.id, true)}
-                        className={`py-2 px-3 rounded-xl text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
+                        onClick={() => guardedVoteProblem(prob.id, true)}
+                        disabled={readOnly}
+                        className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit py-2 px-3 rounded-xl text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
                           hasCommitted
                             ? 'bg-amber-500 text-stone-950 font-black shadow-xs'
                             : 'bg-[#0D4734] hover:bg-[#166E52] text-white shadow-xs'
@@ -647,8 +707,9 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
 
                     {/* Endorse Button */}
                     <button
-                      onClick={() => onVoteTrustee(cand.id)}
-                      className={`w-full py-2 rounded-xl text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
+                      onClick={() => guardedVoteTrustee(cand.id)}
+                      disabled={readOnly}
+                      className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit w-full py-2 rounded-xl text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
                         isEndorsed
                           ? 'bg-amber-400 text-stone-950 font-black shadow-xs'
                           : 'bg-[#0D4734] hover:bg-[#166E52] text-white shadow-xs'
@@ -749,8 +810,9 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                     <div className="flex justify-between items-center text-xs">
                       <span className="font-mono text-stone-500">{prob.upvotes} upvotes</span>
                       <button
-                        onClick={() => onVoteProblem(prob.id, false)}
-                        className="px-3 py-1 bg-[#0D4734] text-white rounded-lg font-bold text-xs"
+                        onClick={() => guardedVoteProblem(prob.id, false)}
+                        disabled={readOnly}
+                        className="disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit px-3 py-1 bg-[#0D4734] text-white rounded-lg font-bold text-xs"
                       >
                         Upvote
                       </button>
@@ -767,8 +829,9 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                     <div className="text-xs font-display font-black text-stone-900">Seat {cand.seatNumber}: {cand.name}</div>
                     <div className="text-[11px] text-stone-600">{cand.titleOrOrg}</div>
                     <button
-                      onClick={() => onVoteTrustee(cand.id)}
-                      className="mt-2 w-full py-1.5 bg-amber-400 text-stone-950 font-black rounded-lg text-xs"
+                      onClick={() => guardedVoteTrustee(cand.id)}
+                      disabled={readOnly}
+                      className="disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit mt-2 w-full py-1.5 bg-amber-400 text-stone-950 font-black rounded-lg text-xs"
                     >
                       Endorse ({cand.votes})
                     </button>
