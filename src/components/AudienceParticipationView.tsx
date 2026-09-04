@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { 
   PlateauProblem, AttendeeProfile, TrusteeCandidate, CategoryInfo, 
-  MyVotes, RoomSessionState, ToastNotification, NavigationTab 
+  MyVotes, RoomSessionState, ToastNotification, NavigationTab, VotingRound
 } from '../types';
 import { sounds } from '../utils/soundEffects';
 
@@ -22,6 +22,9 @@ interface AudienceParticipationViewProps {
   // Outside a host-driven round the room screen is look-only: the live record
   // can be read, but nothing on it can be written.
   readOnly?: boolean;
+  // The most recently archived round. Shown as a quiet summary so a phone that
+  // was offline through the whole reveal window still learns what happened.
+  lastRound?: VotingRound | null;
   syncStatus?: 'connected' | 'connecting' | 'reconnecting' | 'offline';
   latencyMs?: number | null;
   onVoteProblem?: (id: string, commit: boolean, name?: string) => void;
@@ -52,6 +55,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
     updatedAt: Date.now()
   },
   readOnly = false,
+  lastRound = null,
   syncStatus = 'connected',
   latencyMs = 18,
   onVoteProblem = (_id: string, _commit: boolean, _name?: string) => {},
@@ -323,6 +327,43 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                   {sessionState.announcement.message}
                 </p>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Last round result — the catch-up card. A phone that was locked or
+            offline through the reveal lands here with no idea a round ran, so
+            the result stays on the idle screen after the takeover clears.
+            Deliberately quiet: it is a record, not a call to action. */}
+        {lastRound && (
+          <div className="p-3 rounded-2xl bg-white border border-stone-300 shadow-xs">
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <div className="flex items-center gap-1.5 text-[10px] font-mono font-bold uppercase tracking-wider text-amber-700">
+                <Award className="w-3.5 h-3.5" />
+                Last round result
+              </div>
+              <span className="text-[10px] font-mono text-stone-400 shrink-0">
+                {lastRound.ballotsCast} ballot{lastRound.ballotsCast === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            <div className="text-sm font-display font-black text-stone-900 leading-snug">
+              {lastRound.title}
+            </div>
+
+            <div className="mt-2 space-y-1">
+              {(lastRound.results || []).slice(0, 3).map((r, i) => (
+                <div key={r.optionId} className="flex items-center gap-2 text-xs">
+                  <span className="w-4 shrink-0 font-mono text-stone-400">{i + 1}</span>
+                  <span className="flex-1 truncate text-stone-700 font-semibold">{r.label}</span>
+                  <span className="font-mono font-bold text-stone-900 shrink-0">
+                    {r.votes} vote{r.votes === 1 ? '' : 's'}
+                  </span>
+                </div>
+              ))}
+              {!(lastRound.results || []).length && (
+                <div className="text-xs text-stone-500">No ballots were cast in that round.</div>
+              )}
             </div>
           </div>
         )}

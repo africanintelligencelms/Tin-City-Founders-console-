@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Radio, Megaphone, Send, Lock, Unlock, QrCode, Copy, Check, Users, 
   Sparkles, Vote, Award, Handshake, Compass, ChevronDown, ChevronUp,
-  X, AlertCircle, PlayCircle, ExternalLink, Square, Trophy, Loader2
+  X, AlertCircle, PlayCircle, ExternalLink, Square, Trophy, Loader2, Download
 } from 'lucide-react';
 import { RoomPhase, RoomSessionState, ToastNotification, RoundKind } from '../types';
 import { sounds } from '../utils/soundEffects';
@@ -19,6 +19,8 @@ interface StageConductorBarProps {
   onOpenRound?: (opts: { kind: RoundKind; title: string; maxSelections: number }) => Promise<void>;
   onCloseRound?: () => Promise<void>;
   onClearRound?: () => Promise<void>;
+  // Pulls the whole room down as a JSON file the host can restore from.
+  onDownloadBackup?: () => Promise<void>;
 }
 
 const PHASES: Array<{
@@ -96,7 +98,8 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
   isCompact = false,
   onOpenRound,
   onCloseRound,
-  onClearRound
+  onClearRound,
+  onDownloadBackup
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(!isCompact);
   const [isBroadcastOpen, setIsBroadcastOpen] = useState<boolean>(false);
@@ -109,6 +112,7 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
   const [roundTitle, setRoundTitle] = useState<string>('');
   const [roundPicks, setRoundPicks] = useState<number>(1);
   const [isRoundBusy, setIsRoundBusy] = useState<boolean>(false);
+  const [isBackupBusy, setIsBackupBusy] = useState<boolean>(false);
 
   const activePhaseInfo = PHASES.find(p => p.id === sessionState.activePhase) || PHASES[2];
   const activeRound = sessionState.activeRound || null;
@@ -242,6 +246,17 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
     }
   };
 
+  const handleDownloadBackup = async () => {
+    if (!onDownloadBackup) return;
+    sounds.playTapSound();
+    setIsBackupBusy(true);
+    try {
+      await onDownloadBackup();
+    } finally {
+      setIsBackupBusy(false);
+    }
+  };
+
   const handleCopyAudienceLink = () => {
     try {
       navigator.clipboard.writeText(getAudienceUrl());
@@ -293,6 +308,26 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
               <Megaphone className="w-3.5 h-3.5 text-amber-300" />
               <span className="hidden xs:inline">Broadcast Alert</span>
             </button>
+
+            {/* Room Backup — the failsafe if the host platform restarts and
+                loses the in-memory room. Saves a file that can be dropped in
+                as .data/room_state.json on a laptop. */}
+            {onDownloadBackup && (
+              <button
+                onClick={handleDownloadBackup}
+                disabled={isBackupBusy}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-white/85 hover:text-white text-xs font-bold font-display transition cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Download the whole room as a file. Restore it by saving it as .data/room_state.json on the backup machine."
+              >
+                {isBackupBusy ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-white/70" />
+                ) : (
+                  <Download className="w-3.5 h-3.5 text-emerald-200" />
+                )}
+                <span className="hidden md:inline">Download room backup</span>
+                <span className="md:hidden sr-only">Download room backup</span>
+              </button>
+            )}
 
             {/* Audience QR Code Button */}
             <button

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { NavigationTab, PlateauProblem, AttendeeProfile, ToastNotification, RoomSessionState } from './types';
-import type { TrusteeCandidate, CategoryInfo, MyVotes, MyRoundBallot, RoundKind } from './types';
+import type { TrusteeCandidate, CategoryInfo, MyVotes, MyRoundBallot, RoundKind, VotingRound } from './types';
 import { Header } from './components/Header';
 import { ProblemVoting } from './components/ProblemVoting';
 import { AttendeeDirectory } from './components/AttendeeDirectory';
@@ -16,6 +16,7 @@ import { RoomLiveAnalyticsModal } from './components/RoomLiveAnalyticsModal';
 import { AudienceParticipationView } from './components/AudienceParticipationView';
 import { StageConductorBar } from './components/StageConductorBar';
 import { RoundTakeover } from './components/RoundTakeover';
+import { captureHostKeyFromUrl, hostFetch, verifyHostKey } from './utils/hostKey';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavigationTab>('voting');
@@ -46,6 +47,17 @@ export default function App() {
     return params.get('mode') === 'audience' || params.has('join') || window.location.pathname === '/join';
   });
 
+  // Pull ?host=<key> out of the URL on the very first render (before anything is
+  // painted on a projector) and stash it. Audience phones never carry one.
+  useState<string>(() => captureHostKeyFromUrl());
+
+  // Server's verdict on this device's host key. Optimistic until /api/host/verify
+  // answers, then authoritative: a false locks the app into audience mode no
+  // matter what the URL says, so dropping ?mode=audience no longer reveals the
+  // console. The server enforces the same key on every host route regardless.
+  const [isHostVerified, setIsHostVerified] = useState<boolean>(true);
+  const audienceOnly = isAudienceMode || !isHostVerified;
+
   const [roomSessionState, setRoomSessionState] = useState<RoomSessionState>({
     activePhase: 'voting',
     phaseTitle: 'Live Plateau Problem Voting & Squad Formation',
@@ -62,7 +74,14 @@ export default function App() {
     hasVoted: false
   });
 
+  // The most recently archived round. A phone that was locked or offline through
+  // the whole reveal window reconnects to the idle screen; without this it would
+  // have no clue a round ever ran.
+  const [lastRound, setLastRound] = useState<VotingRound | null>(null);
+
   const handleToggleAudienceMode = (enableAudience: boolean) => {
+    // Without a valid host key there is no way out of audience mode.
+    if (!enableAudience && !isHostVerified) return;
     setIsAudienceMode(enableAudience);
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
@@ -128,6 +147,9 @@ export default function App() {
       if (!data.success) return;
       setRoomSessionState(prev => ({ ...prev, activeRound: data.round ?? null }));
       if (data.myBallot) setMyRoundBallot(data.myBallot);
+      // history[0] is the newest archived round — what the idle screen shows as
+      // "last round result" for anyone who missed the live reveal.
+      if (Array.isArray(data.history)) setLastRound(data.history[0] ?? null);
     } catch (e) {
       // Offline: the SSE snapshot will fill this in when the link comes back
     }
@@ -146,7 +168,7 @@ export default function App() {
   // Stage Conductor Remote Control Handlers
   const handleUpdateSessionState = async (partial: Partial<RoomSessionState>) => {
     try {
-      const res = await fetch('/api/session/state', {
+      const res = await hostFetch('/api/session/state', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(partial)
@@ -162,12 +184,30 @@ export default function App() {
 
   // ---------------- Voting round lifecycle ----------------
 
-  const postRound = async (path: string, method: string, body?: any) => {
-    const res = await fetch(path, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined
-    });
+  // timeoutMs arms an AbortController so a request that never comes back on a
+  // half-dead venue connection fails loudly instead of spinning forever.
+  const postRound = async (path: string, method: string, body?: any, timeoutMs?: number) => {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer =
+      controller && timeoutMs
+        ? setTimeout(() => controller.abort(), timeoutMs)
+        : null;
+    let res: Response;
+    try {
+      res = await hostFetch(path, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller ? controller.signal : undefined
+      });
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        throw new Error('The room did not answer in time. Check your connection and try again.');
+      }
+      throw new Error('Could not reach the room. Check your connection and try again.');
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.success === false) {
       throw new Error(data.error || `Round request failed (${res.status})`);
@@ -199,11 +239,14 @@ export default function App() {
 
   const handleSubmitBallot = async (selections: string[]) => {
     const roundId = roomSessionState.activeRound?.id;
-    const data = await postRound('/api/round/vote', 'POST', {
-      roundId,
-      selections,
-      voterName: currentProfile?.name
-    });
+    // 10s cap. Resubmitting is idempotent server-side (one ballot per voterId),
+    // so a retry after a timeout can never double-count.
+    const data = await postRound(
+      '/api/round/vote',
+      'POST',
+      { roundId, selections, voterName: currentProfile?.name },
+      10000
+    );
     applyRound(data.round);
     if (data.myBallot) setMyRoundBallot(data.myBallot);
     addToast({
@@ -214,9 +257,57 @@ export default function App() {
     });
   };
 
+  // ---------------- Room backup (host failsafe) ----------------
+
+  // Pulls the whole room down as a file. On a host with no persistent disk the
+  // room dies with the process, so this is what gets the evening onto the
+  // backup laptop: save it as .data/room_state.json there and start the server.
+  const handleDownloadBackup = async () => {
+    let url: string | null = null;
+    try {
+      const res = await hostFetch('/api/admin/state');
+      if (!res.ok) {
+        throw new Error(
+          res.status === 403
+            ? 'This device is not signed in as host.'
+            : `Server refused the backup (${res.status}).`
+        );
+      }
+      const text = await res.text();
+      // Guard against saving an error page as if it were a room.
+      JSON.parse(text);
+
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `room_state-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      addToast({
+        type: 'success',
+        title: 'Room backup downloaded',
+        message: 'Save it as .data/room_state.json on the backup machine, then start the server.',
+        duration: 6000
+      });
+    } catch (err) {
+      addToast({
+        type: 'info',
+        title: 'Backup failed',
+        message: err instanceof Error ? err.message : 'Could not download the room state.',
+        duration: 6000
+      });
+    } finally {
+      // Revoke on the next tick so the click has already been handled.
+      if (url) setTimeout(() => URL.revokeObjectURL(url!), 1000);
+    }
+  };
+
   const handleBroadcastAnnouncement = async (message: string) => {
     try {
-      const res = await fetch('/api/session/broadcast', {
+      const res = await hostFetch('/api/session/broadcast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -257,6 +348,19 @@ export default function App() {
     // Then let the server correct the local cache
     refreshMyVotes();
     refreshMyRound();
+  }, []);
+
+  // Ask the server whether this device holds the host key. ok:false forces
+  // audience mode; ok:true (including when HOST_KEY is unset, e.g. local dev)
+  // leaves behaviour exactly as it was.
+  useEffect(() => {
+    let cancelled = false;
+    verifyHostKey().then(ok => {
+      if (cancelled) return;
+      setIsHostVerified(ok);
+      if (!ok) setIsAudienceMode(true);
+    });
+    return () => { cancelled = true; };
   }, []);
 
   // Real-Time Server-Sent Events (SSE) Stream Connection
@@ -393,10 +497,16 @@ export default function App() {
           }
         });
 
-        eventSource.addEventListener('ROUND_CLEARED', () => {
+        eventSource.addEventListener('ROUND_CLEARED', (e: MessageEvent) => {
           if (isCancelled) return;
           setRoomSessionState(prev => ({ ...prev, activeRound: null }));
           setMyRoundBallot({ roundId: null, selections: [], hasVoted: false });
+          // Keep the result on the idle screen rather than letting the round
+          // disappear the instant the reveal window closes.
+          try {
+            const data = JSON.parse(e.data);
+            if (data?.round) setLastRound(data.round);
+          } catch (err) {}
         });
 
         // Audience live reaction bubble event
@@ -429,6 +539,10 @@ export default function App() {
                 }
               })
               .catch(() => {});
+            // The room snapshot does not carry this device's ballot, so a
+            // dropped stream would otherwise leave "have I already voted?"
+            // answered from stale memory.
+            refreshMyRound();
           }
         };
       } catch (err) {
@@ -446,6 +560,19 @@ export default function App() {
       }
     };
   }, [reconnectCounter]);
+
+  // Mobile browsers routinely freeze or kill an SSE connection while a tab is
+  // backgrounded, and a locked phone gets no events at all. When the screen
+  // comes back, re-ask the server what round is live and whether this device
+  // has already voted, rather than trusting whatever was on screen before.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshMyRound();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
 
   // Trigger manual reconnect
   const handleManualReconnect = () => {
@@ -833,7 +960,7 @@ export default function App() {
 
   return (
     <VotingParticleProvider>
-      {isAudienceMode ? (
+      {audienceOnly ? (
         <div className="min-h-screen bg-[#071912] text-[#FAF6EE]">
           {/* A live round takes the phone over; outside one, the room view is the idle screen. */}
           {roomSessionState.activeRound ? (
@@ -842,12 +969,15 @@ export default function App() {
               myBallot={myRoundBallot}
               onSubmitBallot={handleSubmitBallot}
               voterName={currentProfile?.name}
+              syncStatus={syncStatus}
+              onReconnect={handleManualReconnect}
             />
           ) : (
           <AudienceParticipationView
             /* Idle room screen is look-only; all voting happens inside a host round. */
             readOnly
             sessionState={roomSessionState}
+            lastRound={lastRound}
             problems={problems}
             attendees={attendees}
             categories={liveCategories}
@@ -913,6 +1043,7 @@ export default function App() {
               onOpenRound={handleOpenRound}
               onCloseRound={handleCloseRound}
               onClearRound={handleClearRound}
+              onDownloadBackup={handleDownloadBackup}
             />
           </div>
 
