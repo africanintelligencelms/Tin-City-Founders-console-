@@ -41,8 +41,8 @@ Substitute once and stay consistent.
 
 | Placeholder | Meaning |
 |---|---|
-| `console.example.com` | the hostname you will serve on |
-| `203.0.113.10` | your VPS IPv4 |
+| `console.tincityfounders.com` | the hostname you will serve on |
+| `194.164.76.213` | the VPS IPv4 |
 
 `#` = as root. `$ (tcf)` = as the service user.
 
@@ -72,7 +72,7 @@ git tag vps-cutover-1 && git push origin vps-cutover-1
 ## 2. Base box
 
 ```bash
-ssh root@203.0.113.10
+ssh root@194.164.76.213
 apt update && apt upgrade -y
 timedatectl set-timezone Africa/Lagos
 ```
@@ -133,7 +133,7 @@ openssl rand -hex 24      # copy this
 
 ```ini
 NODE_ENV=production
-APP_URL=https://console.example.com
+APP_URL=https://console.tincityfounders.com
 HOST_KEY=<the openssl output>
 GEMINI_API_KEY=<your key>
 ```
@@ -207,7 +207,7 @@ module.exports = {
     env: {
       NODE_ENV: 'production',
       PORT: 3000,
-      APP_URL: 'https://console.example.com'
+      APP_URL: 'https://console.tincityfounders.com'
     }
   }]
 };
@@ -252,7 +252,10 @@ find "$BACKUPS" -name 'room_state-*.json' -mtime +60 -delete 2>/dev/null || true
 
 sudo -u tcf -H git -C "$APP" fetch --all --tags --prune
 sudo -u tcf -H git -C "$APP" checkout "$REF"
-sudo -u tcf -H bash -lc "cd $APP && unset NODE_ENV && npm ci --include=dev && npm run build"
+sudo -u tcf -H # npm ci is preferred for reproducibility, but rollup's optional native
+# binaries have broken it twice on this project (npm/cli#4828). Fall back
+# rather than leave a deploy dead in the water.
+bash -lc "cd $APP && unset NODE_ENV && { npm ci --include=dev || { echo '  npm ci failed, falling back'; rm -rf node_modules package-lock.json; npm install --include=dev; }; } && npm run build"
 [ -f "$APP/dist/index.html" ] && [ -f "$APP/dist/server.cjs" ] || { echo "FATAL: build incomplete"; exit 1; }
 
 pm2 restart tincity --update-env && sleep 3
@@ -276,12 +279,17 @@ build, anyone loading the page gets broken assets.
 nginx already serves every other site here, with TLS managed by certbot. Add a
 site file; change nothing shared.
 
-`nano /etc/nginx/sites-available/console.example.com`:
+`nano /etc/nginx/sites-available/console.tincityfounders.com`:
 
 ```nginx
 server {
     listen 80;
-    server_name console.example.com;
+    # IPv6 is NOT optional. The box has an IPv6 address and an AAAA record is
+    # live. nginx's `default` site is `listen [::]:80 default_server`, so a
+    # block without this line lets every IPv6 visitor fall through to that
+    # default and get a 404 - while IPv4 testing shows everything working.
+    listen [::]:80;
+    server_name console.tincityfounders.com;
 
     client_max_body_size 200M;
 
@@ -315,7 +323,7 @@ server {
 ```
 
 ```bash
-ln -s /etc/nginx/sites-available/console.example.com /etc/nginx/sites-enabled/
+ln -s /etc/nginx/sites-available/console.tincityfounders.com /etc/nginx/sites-enabled/
 nginx -t                 # MUST say "syntax is ok" and "test is successful"
 systemctl reload nginx   # reload, not restart - does not drop other sites
 ```
@@ -326,7 +334,7 @@ systemctl reload nginx   # reload, not restart - does not drop other sites
 TLS, after DNS is pointed (step 10):
 
 ```bash
-certbot --nginx -d console.example.com
+certbot --nginx -d console.tincityfounders.com
 ```
 
 certbot rewrites this file in place, adding the 443 block and the 80→443
@@ -335,7 +343,7 @@ redirect, matching every other site here. **Re-check afterwards that
 location blocks, but confirm rather than assume:
 
 ```bash
-grep -A3 "live/stream" /etc/nginx/sites-enabled/console.example.com
+grep -A3 "live/stream" /etc/nginx/sites-enabled/console.tincityfounders.com
 ```
 
 **Do not add `gzip on` to this site.** Compression and SSE are a classic silent
@@ -373,7 +381,7 @@ Done at your registrar, not on the server.
 
 | Type | Name | Value | TTL |
 |---|---|---|---|
-| A | `console` | `203.0.113.10` | 300 |
+| A | `console` | `194.164.76.213` | 300 |
 
 - **Delete the old CNAME.** A name cannot hold both.
 - **Check for an AAAA record.** If one points elsewhere, every visitor on IPv6
@@ -383,16 +391,16 @@ Done at your registrar, not on the server.
 Verify from your laptop, not the box:
 
 ```bash
-dig +short A console.example.com @1.1.1.1
-dig +short A console.example.com @8.8.8.8
-dig +short AAAA console.example.com @1.1.1.1   # expect empty
+dig +short A console.tincityfounders.com @1.1.1.1
+dig +short A console.tincityfounders.com @8.8.8.8
+dig +short AAAA console.tincityfounders.com @1.1.1.1   # expect empty
 ```
 
 Only when both agree, request the certificate:
 
 ```bash
-certbot --nginx -d console.example.com
-grep -A3 "live/stream" /etc/nginx/sites-enabled/console.example.com  # buffering off survived?
+certbot --nginx -d console.tincityfounders.com
+grep -A3 "live/stream" /etc/nginx/sites-enabled/console.tincityfounders.com  # buffering off survived?
 ```
 
 ---
@@ -400,15 +408,15 @@ grep -A3 "live/stream" /etc/nginx/sites-enabled/console.example.com  # buffering
 ## 11. Verification after cutover
 
 ```bash
-curl -sI http://console.example.com | head -3        # 308 -> https
-curl -sI https://console.example.com/ | head -3      # HTTP/2 200
-curl -s https://console.example.com/api/live/sync | head -c 120
+curl -sI http://console.tincityfounders.com | head -3        # 308 -> https
+curl -sI https://console.tincityfounders.com/ | head -3      # HTTP/2 200
+curl -s https://console.tincityfounders.com/api/live/sync | head -c 120
 ```
 
 **Proxy headers reached Node:**
 
 ```bash
-curl -sI https://console.example.com/api/host/verify | grep -i set-cookie
+curl -sI https://console.tincityfounders.com/api/host/verify | grep -i set-cookie
 ```
 
 Must include `Secure`. If it does not, `x-forwarded-proto` is not arriving.
@@ -416,15 +424,15 @@ Must include `Secure`. If it does not, `x-forwarded-proto` is not arriving.
 **Host gate:**
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://console.example.com/api/admin/state          # 403
+curl -s -o /dev/null -w '%{http_code}\n' https://console.tincityfounders.com/api/admin/state          # 403
 curl -s -o /dev/null -w '%{http_code}\n' -H "x-tcf-host: <KEY>" \
-     https://console.example.com/api/admin/state                                              # 200
+     https://console.tincityfounders.com/api/admin/state                                              # 200
 ```
 
 **The SSE soak — the test that matters:**
 
 ```bash
-curl -N -H 'Accept: text/event-stream' https://console.example.com/api/live/stream
+curl -N -H 'Accept: text/event-stream' https://console.tincityfounders.com/api/live/stream
 ```
 
 Success is specific, and "it connected" is not enough:
@@ -458,7 +466,7 @@ A phone with the page open recovers on its own in ~3s.
 **The bypass is closed** — run from your laptop:
 
 ```bash
-curl -m 5 http://203.0.113.10:3000/api/live/sync    # must TIME OUT
+curl -m 5 http://194.164.76.213:3000/api/live/sync    # must TIME OUT
 ```
 
 **Regenerate the printed QR.** The old one encodes the Render URL and will send
@@ -479,7 +487,7 @@ pm2 restart tincity --update-env
 The console is gated by `HOST_KEY`. Open it once per browser at:
 
 ```
-https://console.example.com/?host=<key>
+https://console.tincityfounders.com/?host=<key>
 ```
 
 The key is stored in that browser and stripped from the address bar, so it is
@@ -505,7 +513,7 @@ During an event, download a backup from the console's **Download room backup**
 button, or:
 
 ```bash
-curl -H "x-tcf-host: <KEY>" https://console.example.com/api/admin/state -o room_state.json
+curl -H "x-tcf-host: <KEY>" https://console.tincityfounders.com/api/admin/state -o room_state.json
 ```
 
 ---
