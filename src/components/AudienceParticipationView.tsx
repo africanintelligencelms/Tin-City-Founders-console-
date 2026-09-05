@@ -37,6 +37,9 @@ interface AudienceParticipationViewProps {
   onVoteCategory?: (categoryName: string) => void;
   onVoteTrustee?: (candidateId: string) => void;
   onOpenCheckIn?: () => void;
+  // Opens the separate full-screen profile sheet. Deliberately distinct from
+  // onOpenCheckIn: check-in stays name-only, the sheet holds everything else.
+  onOpenProfileSheet?: () => void;
   onSaveProfile?: (profile: AttendeeProfile) => void;
   onSwitchToFullConsole?: () => void;
   onReconnect?: () => void;
@@ -72,6 +75,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
   onVoteCategory = (_cat: string) => {},
   onVoteTrustee = (_candId: string) => {},
   onOpenCheckIn = () => {},
+  onOpenProfileSheet,
   onSaveProfile = (_profile: AttendeeProfile) => {},
   onSwitchToFullConsole = () => {},
   onReconnect = () => {},
@@ -79,6 +83,10 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
   onSubmitProblem = (_prob: any) => {},
   onNominateTrustee = (_data: any) => {}
 }) => {
+  // Tapping your own badge opens the profile sheet when the host has wired one
+  // up; otherwise it falls back to the check-in modal, as it always did.
+  const openMyProfile = onOpenProfileSheet || onOpenCheckIn;
+
   // Navigation for Free Roam mode
   const [audienceSubTab, setAudienceSubTab] = useState<'voting' | 'directory' | 'trustees' | 'squads'>('voting');
   const [isSubmitPitchOpen, setIsSubmitPitchOpen] = useState(false);
@@ -393,7 +401,9 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
           <div className="flex items-center gap-2">
             {currentProfile ? (
               <button
-                onClick={onOpenCheckIn}
+                onClick={openMyProfile}
+                title="Your profile"
+                aria-label="Open your profile"
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-800/70 hover:bg-emerald-800 border border-emerald-500/30 text-xs font-display font-bold cursor-pointer"
               >
                 <div 
@@ -575,7 +585,12 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                 </button>
               </div>
             ) : (
-              <div className="bg-gradient-to-br from-[#0D4734] to-[#09251B] text-white rounded-2xl p-4 shadow-md border border-emerald-700/50 space-y-2">
+              <button
+                type="button"
+                onClick={openMyProfile}
+                aria-label="Open your profile"
+                className="w-full text-left bg-gradient-to-br from-[#0D4734] to-[#09251B] text-white rounded-2xl p-4 shadow-md border border-emerald-700/50 space-y-2 cursor-pointer active:scale-[0.99] transition"
+              >
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-mono uppercase bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded font-bold">
                     Official Attendee Pass
@@ -593,9 +608,11 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                     <h3 className="text-base font-display font-black leading-tight text-white">
                       {currentProfile.name}
                     </h3>
-                    <p className="text-xs text-emerald-200 font-medium">
-                      {currentProfile.title || 'Plateau Innovator'}
-                    </p>
+                    {currentProfile.title && (
+                      <p className="text-xs text-emerald-200 font-medium">
+                        {currentProfile.title}
+                      </p>
+                    )}
                     {currentProfile.location && (
                       <div className="flex items-center gap-1 text-[11px] text-white/70 mt-0.5">
                         <MapPin className="w-3 h-3 text-amber-400" />
@@ -610,7 +627,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                     <span>{currentProfile.giveAsk}</span>
                   </div>
                 )}
-              </div>
+              </button>
             )}
 
             {/* Who is in the room quick feed */}

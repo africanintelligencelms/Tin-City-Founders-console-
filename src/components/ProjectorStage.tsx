@@ -516,11 +516,14 @@ export const ProjectorStage: React.FC<ProjectorStageProps> = ({
     const newProfile: AttendeeProfile = {
       id: `attendee-${Date.now()}`,
       name: parsedFounderData.name || 'Tin City Founder',
-      title: parsedFounderData.title || 'Tech Founder',
-      tags: parsedFounderData.tags && parsedFounderData.tags.length > 0 ? parsedFounderData.tags : ['Founder', 'Jos Tech'],
-      bio: parsedFounderData.bio || 'Checked in via Tin City QR Scanner.',
+      // Only what the scanned badge actually carried. A blank field stays blank
+      // so the directory shows real detail, not the same invented line on
+      // every card — the attendee can fill it in from their profile sheet.
+      title: parsedFounderData.title || '',
+      tags: parsedFounderData.tags && parsedFounderData.tags.length > 0 ? parsedFounderData.tags : [],
+      bio: parsedFounderData.bio || '',
       giveAsk: parsedFounderData.giveAsk || '',
-      location: parsedFounderData.location || 'Jos, Plateau State',
+      location: parsedFounderData.location || '',
       avatarColor: '#0D4734',
       checkedInAt: new Date().toISOString()
     };

@@ -14,6 +14,7 @@ import { ToastContainer } from './components/ToastContainer';
 import { VotingParticleProvider } from './components/VotingParticleManager';
 import { RoomLiveAnalyticsModal } from './components/RoomLiveAnalyticsModal';
 import { AudienceParticipationView } from './components/AudienceParticipationView';
+import { AudienceProfileSheet } from './components/AudienceProfileSheet';
 import { StageConductorBar } from './components/StageConductorBar';
 import { captureHostKeyFromUrl, hostFetch, verifyHostKey } from './utils/hostKey';
 
@@ -23,6 +24,9 @@ export default function App() {
   const [attendees, setAttendees] = useState<AttendeeProfile[]>([]);
   const [currentProfile, setCurrentProfile] = useState<AttendeeProfile | null>(null);
   const [isCheckInModalOpen, setIsCheckInModalOpen] = useState<boolean>(false);
+  // The richer profile sheet. Separate surface, separate state: check-in stays
+  // name-only, and this only exists while an attendee has chosen to open it.
+  const [isProfileSheetOpen, setIsProfileSheetOpen] = useState<boolean>(false);
   const [isAnalyticsModalOpen, setIsAnalyticsModalOpen] = useState<boolean>(false);
   const [isFirstVisit, setIsFirstVisit] = useState<boolean>(false);
   const [userVotedIds, setUserVotedIds] = useState<string[]>([]);
@@ -1128,6 +1132,7 @@ export default function App() {
             onSubmitProblem={handleAddProblem}
             onNominateTrustee={handleNominateTrustee}
             onOpenCheckIn={() => setIsCheckInModalOpen(true)}
+            onOpenProfileSheet={() => setIsProfileSheetOpen(true)}
             onSaveProfile={handleSaveProfile}
             onSwitchToFullConsole={() => handleToggleAudienceMode(false)}
             syncStatus={syncStatus}
@@ -1143,6 +1148,14 @@ export default function App() {
             currentProfile={currentProfile}
             onSaveProfile={handleSaveProfile}
             isFirstCheckIn={isFirstVisit}
+          />
+
+          {/* Optional audience profile sheet (Give/Ask, role, skills, area, bio) */}
+          <AudienceProfileSheet
+            isOpen={isProfileSheetOpen}
+            currentProfile={currentProfile}
+            onClose={() => setIsProfileSheetOpen(false)}
+            onSaveProfile={handleSaveProfile}
           />
 
           {/* Non-intrusive Toast Notifications (Bottom Screen) */}
