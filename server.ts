@@ -6,7 +6,9 @@ import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
 
 const app = express();
-const PORT = 3000;
+// Port is configurable so the app can slot into a shared box that already
+// assigns its own ports per service. Defaults to 3000 when unset.
+const PORT = Number(process.env.PORT) || 3000;
 const APP_URL = process.env.APP_URL
   ? (/^https?:\/\//i.test(process.env.APP_URL) ? process.env.APP_URL : `http://${process.env.APP_URL}`)
   : `http://localhost:${PORT}`;
