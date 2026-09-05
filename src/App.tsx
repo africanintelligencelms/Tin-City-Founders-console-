@@ -1076,7 +1076,7 @@ export default function App() {
   // Update problem's category assignment
   const handleUpdateProblemCategory = async (problemId: string, newCategory: string) => {
     try {
-      const res = await fetch(`/api/problems/${problemId}/category`, {
+      const res = await hostFetch(`/api/problems/${problemId}/category`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ category: newCategory })

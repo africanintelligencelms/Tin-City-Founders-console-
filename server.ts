@@ -1454,6 +1454,20 @@ app.post("/api/trustees/nominate", (req, res) => {
     ? trusteeCandidates.findIndex(c => c.id === id)
     : trusteeCandidates.findIndex(c => c.seatNumber === Number(seatNumber));
   const replaced = existingIdx >= 0 ? trusteeCandidates[existingIdx] : null;
+
+  // Nominating into a FREE seat is open to the floor - that is the feature.
+  // Nominating over an OCCUPIED seat is destructive: it evicts the incumbent and
+  // drops their endorsements below. That is the same act as DELETE /api/trustees/:id,
+  // which is host-gated, so it cannot be reachable through an ungated route.
+  if (!id && replaced && !hasHostKey(req)) {
+    return res.status(409).json({
+      success: false,
+      error: "seat_taken",
+      message: `Seat ${seatNumber} is already held by ${replaced.name}. Speak to the host to change it.`,
+      candidates: publicTrustees()
+    });
+  }
+
   const isNewPerson = !replaced || replaced.id !== candidateId;
 
   const newCandidate = {
@@ -1610,7 +1624,7 @@ app.post("/api/trustees/:id/score", requireHost, (req, res) => {
   if (notes !== undefined) candidate.notes = notes;
 
   broadcastStateUpdate("trustee_scored", `Updated R-N-T evaluation for ${candidate.name} (Seat ${candidate.seatNumber})`);
-  res.json({ success: true, candidate, candidates: trusteeCandidates });
+  res.json({ success: true, candidate: publicTrustee(candidate), candidates: publicTrustees() });
 });
 
 // ----------------- ATTENDEES ENDPOINTS -----------------
@@ -1629,17 +1643,29 @@ app.post(["/api/attendees", "/api/attendees/checkin"], (req, res) => {
 
   const attendeeId = id || `att-${Date.now()}`;
   const existingIndex = attendees.findIndex(a => a.id === attendeeId || a.name.toLowerCase() === name.trim().toLowerCase());
+  const existing = existingIndex >= 0 ? attendees[existingIndex] : undefined;
+
+  // Blank stays blank. A field the client actually sent wins even when it is an
+  // empty string (that is somebody clearing it); a field the client omitted
+  // falls back to what the record already held, and to empty otherwise. The
+  // server does not invent a title, a tag or a town — every attendee reading
+  // "Tin City Founder / Founder / CEO / Jos, Plateau State" is what made the
+  // directory useless.
+  const text = (value: unknown, previous: string | undefined) =>
+    typeof value === "string" ? value.trim() : (previous ?? "");
 
   const newAttendee = {
     id: attendeeId,
     name: name.trim(),
-    title: title ? title.trim() : "Tin City Founder",
-    tags: Array.isArray(tags) && tags.length > 0 ? tags : ["Founder / CEO"],
-    bio: bio ? bio.trim() : "",
-    giveAsk: giveAsk ? giveAsk.trim() : "",
-    location: location ? location.trim() : "Jos, Plateau State",
-    avatarColor: avatarColor || "#0D4734",
-    checkedInAt: existingIndex >= 0 ? attendees[existingIndex].checkedInAt : new Date().toISOString()
+    title: text(title, existing?.title),
+    tags: Array.isArray(tags)
+      ? tags.filter((t: unknown): t is string => typeof t === "string" && t.trim().length > 0).map((t: string) => t.trim())
+      : (existing?.tags ?? []),
+    bio: text(bio, existing?.bio),
+    giveAsk: text(giveAsk, existing?.giveAsk),
+    location: text(location, existing?.location),
+    avatarColor: avatarColor || existing?.avatarColor || "#0D4734",
+    checkedInAt: existing ? existing.checkedInAt : new Date().toISOString()
   };
 
   if (existingIndex >= 0) {
@@ -1797,8 +1823,9 @@ app.post("/api/problems", (req, res) => {
   res.status(201).json({ success: true, problem: newProb, problems, myVotes: myVotesFor(req.voterId) });
 });
 
-// Update a problem's assigned category
-app.post("/api/problems/:id/category", (req, res) => {
+// Update a problem's assigned category. Host-gated: only the console offers this,
+// and an open route let anyone reassign anyone's problem.
+app.post("/api/problems/:id/category", requireHost, (req, res) => {
   const { id } = req.params;
   const { category } = req.body;
 
