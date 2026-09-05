@@ -4,7 +4,19 @@ One long-running process serves the built frontend, the API and the SSE live
 stream from a single origin. There is no separate frontend deployment and no
 database.
 
-**Production is a Hostinger VPS.** `render.yaml` is kept as a fallback only.
+**Production is a Hostinger VPS that already hosts ~45 other sites**, served by
+nginx and managed by PM2. This app slots in alongside them: its own nginx site
+file, its own PM2 process, its own port. It does not touch shared config.
+
+`render.yaml` is kept as a fallback only.
+
+> **Do not install Caddy on this box.** nginx already owns 80/443; a second web
+> server would take every other site down.
+>
+> **Do not run `ufw enable`.** The firewall is currently inactive, so every
+> other app's port is open. Enabling it with rules for this app alone would cut
+> off the rest, and possibly your SSH session. Firewall policy on a box running
+> 45 sites is a separate decision, not part of this deploy.
 
 ## Why one machine, deliberately
 
@@ -14,7 +26,7 @@ different processes and see different tallies, and an SSE client only receives
 broadcasts from the process it connected to.
 
 **Do not run a second instance** without moving state to a shared store first.
-The port is hardcoded (`server.ts:9`), so a second copy cannot start by
+The port is hardcoded (`server.ts:11`), so a second copy cannot start by
 accident. That is a feature.
 
 This is also why the app cannot run on Vercel or any serverless platform:
@@ -134,7 +146,7 @@ systemd's parser is **not a shell**: no `export`, no quotes, no spaces around
 `dotenv/config`, so a stray `.env` would be read as a second, invisible source
 of truth.
 
-**An unset `HOST_KEY` disables the host gate entirely** (`server.ts:75`). On a
+**An unset `HOST_KEY` disables the host gate entirely** (`server.ts:77`). On a
 public URL that means anyone with curl can close a round, broadcast to every
 phone, or burn your Gemini quota.
 
@@ -157,7 +169,7 @@ sudo -u tcf -H ln -s /var/lib/tcf/data /srv/tcf/app/.data
 ls -la /srv/tcf/app/.data     # expect .data -> /var/lib/tcf/data
 ```
 
-Why this matters: `server.ts:91` computes `.data/` from `process.cwd()` and
+Why this matters: `server.ts:93` computes `.data/` from `process.cwd()` and
 **creates it if missing**. If the symlink is ever absent the app does not error
 — it silently makes an empty real `.data/` inside the checkout, the room comes
 up blank, and your actual state sits untouched in `/var/lib/tcf/data`. A "we
@@ -174,56 +186,52 @@ npm would skip them and the build dies on "vite: not found".
 
 ---
 
-## 6. systemd
+## 6. PM2
 
-`nano /etc/systemd/system/tcf.service`:
+The box already runs ~21 Node apps under PM2 as root, with `pm2-logrotate`
+installed. Follow that convention rather than introducing systemd alongside it.
 
-```ini
-[Unit]
-Description=Tin City Founders console
-After=network-online.target
-Wants=network-online.target
-StartLimitIntervalSec=0
+`nano /srv/tcf/app/ecosystem.config.cjs`:
 
-[Service]
-Type=simple
-User=tcf
-Group=tcf
-
-# LOAD-BEARING. process.cwd() decides where BOTH .data/ (server.ts:91) and
-# dist/ (server.ts:2154) resolve. Wrong value = empty room AND a blank page.
-WorkingDirectory=/srv/tcf/app
-
-EnvironmentFile=/etc/tcf/tcf.env
-ExecStart=/usr/bin/node /srv/tcf/app/dist/server.cjs
-
-Restart=always
-RestartSec=3
-TimeoutStopSec=10
-SyslogIdentifier=tcf
-
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=full
-ProtectHome=yes
-ReadWritePaths=/var/lib/tcf/data
-
-[Install]
-WantedBy=multi-user.target
+```js
+module.exports = {
+  apps: [{
+    name: 'tincity',
+    script: 'dist/server.cjs',
+    // LOAD-BEARING. process.cwd() resolves BOTH .data/ (server.ts:93) and
+    // dist/ (server.ts:2156). Wrong cwd = empty room AND a blank page.
+    cwd: '/srv/tcf/app',
+    instances: 1,          // never more than one: state is in-process memory
+    autorestart: true,
+    max_restarts: 0,       // 0 = unlimited; never give up mid-event
+    env: {
+      NODE_ENV: 'production',
+      PORT: 3000,
+      APP_URL: 'https://console.example.com'
+    }
+  }]
+};
 ```
 
+Secrets do **not** go in this file — it is in the repo. Put `HOST_KEY` and
+`GEMINI_API_KEY` in `/etc/tcf/tcf.env` and load them at start:
+
 ```bash
-systemctl daemon-reload
-systemctl enable --now tcf
+cd /srv/tcf/app
+set -a && . /etc/tcf/tcf.env && set +a
+pm2 start ecosystem.config.cjs --update-env
+pm2 save                 # persist the process list across reboots
+pm2 startup              # only if `systemctl is-enabled pm2-root` says disabled
+pm2 logs tincity --lines 30
 curl -s localhost:3000/api/host/verify    # expect {"success":true,"ok":false}
 ```
 
 `ok:false` is **correct** — it proves `HOST_KEY` reached the process and the
-gate is armed.
+gate is armed. `ok:true` means the key did not load and the console is open to
+anyone.
 
-No `PORT` here: the port is hardcoded to 3000 (`server.ts:9`).
-
----
+`pm2 save` is the step people forget. Without it the app does not come back
+after a reboot, even though PM2 itself does.
 
 ## 7. Deploy script
 
@@ -247,8 +255,8 @@ sudo -u tcf -H git -C "$APP" checkout "$REF"
 sudo -u tcf -H bash -lc "cd $APP && unset NODE_ENV && npm ci --include=dev && npm run build"
 [ -f "$APP/dist/index.html" ] && [ -f "$APP/dist/server.cjs" ] || { echo "FATAL: build incomplete"; exit 1; }
 
-systemctl restart tcf && sleep 3
-systemctl is-active --quiet tcf || { journalctl -u tcf -n 40 --no-pager; exit 1; }
+pm2 restart tincity --update-env && sleep 3
+pm2 describe tincity | grep -q 'status.*online' || { pm2 logs tincity --lines 40 --nostream; exit 1; }
 curl -fsS localhost:3000/api/host/verify >/dev/null && echo "  api ok"
 echo "==> Deployed $(sudo -u tcf -H git -C "$APP" rev-parse --short HEAD)"
 ```
@@ -263,76 +271,96 @@ build, anyone loading the page gets broken assets.
 
 ---
 
-## 8. Caddy
+## 8. nginx
 
-```bash
-apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
-apt update && apt install -y caddy
-```
+nginx already serves every other site here, with TLS managed by certbot. Add a
+site file; change nothing shared.
 
-`nano /etc/caddy/Caddyfile` — replace the whole file:
+`nano /etc/nginx/sites-available/console.example.com`:
 
-```caddyfile
-console.example.com {
-	@sse path /api/live/stream
-	reverse_proxy @sse 127.0.0.1:3000 {
-		flush_interval -1
-	}
-	reverse_proxy 127.0.0.1:3000
-	log {
-		output file /var/log/caddy/tcf.log
-		roll_size 20MiB
-		roll_keep 5
-	}
+```nginx
+server {
+    listen 80;
+    server_name console.example.com;
+
+    client_max_body_size 200M;
+
+    # The SSE stream. proxy_buffering off is the critical line: nginx buffers
+    # proxied responses by default, so the one small PING the app writes every
+    # 15s piles up and arrives in clumps, or the stream appears to hang. It
+    # fails SILENTLY - the socket is open, the data just is not moving.
+    location /api/live/stream {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 24h;
+        chunked_transfer_encoding off;
+    }
+
+    # Everything else: API, static assets, SPA fallback - one process.
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
 }
 ```
 
 ```bash
-caddy validate --config /etc/caddy/Caddyfile
+ln -s /etc/nginx/sites-available/console.example.com /etc/nginx/sites-enabled/
+nginx -t                 # MUST say "syntax is ok" and "test is successful"
+systemctl reload nginx   # reload, not restart - does not drop other sites
 ```
 
-**Do not start Caddy yet** — DNS is not pointed at the box and failed
-certificate attempts are rate-limited.
+**If `nginx -t` fails, stop.** Do not reload — a broken config takes down all
+45 sites. Fix the file first.
 
-**Why Caddy, not nginx.** nginx has `proxy_buffering on` by default, so the one
-small `event: PING` the app writes every 15s piles up and arrives in bursts, or
-the connection appears to hang. It fails *silently* — the socket is open, the
-data just is not moving.
-
-**Three things not to add:**
-1. **No `encode gzip`/`zstd`.** Compression and SSE are a classic silent
-   breakage. The app sends `Cache-Control: no-transform` to discourage it.
-2. **No global write timeout.** Caddy has none by default, which is what lets a
-   stream live for a whole event. Add one and every phone drops on that exact
-   interval — several minutes in, i.e. mid-event.
-3. **No manual `X-Forwarded-Proto`.** Caddy sets it, and `server.ts:48` already
-   reads it to decide the `Secure` cookie flag.
-
----
-
-## 9. Firewall
+TLS, after DNS is pointed (step 10):
 
 ```bash
-ufw allow OpenSSH
-ufw allow 80/tcp      # Let's Encrypt HTTP-01 + the redirect
-ufw allow 443/tcp
-ufw enable
-ufw status verbose
+certbot --nginx -d console.example.com
 ```
 
-Expect 22, 80, 443 — and **nothing for 3000**. That omission is the security
-control: the app binds `0.0.0.0`, so without it `http://203.0.113.10:3000`
-serves the whole room in plaintext, bypassing your certificate and handing out
-`tcf_vid` cookies without `Secure`.
+certbot rewrites this file in place, adding the 443 block and the 80→443
+redirect, matching every other site here. **Re-check afterwards that
+`proxy_buffering off` survived into the 443 block** — certbot copies the
+location blocks, but confirm rather than assume:
 
-Keep `0.0.0.0` — it is what makes the laptop-on-LAN failsafe work.
+```bash
+grep -A3 "live/stream" /etc/nginx/sites-enabled/console.example.com
+```
 
-**Also check hPanel → VPS → Firewall.** A panel firewall applies *before* ufw,
-and mismatched rules are a classic "the site is down and both look fine".
+**Do not add `gzip on` to this site.** Compression and SSE are a classic silent
+breakage; the app sends `Cache-Control: no-transform` to discourage it.
 
----
+## 9. Firewall — deliberately unchanged
+
+`ufw` is **inactive** on this box, so every app's port is already reachable
+from the internet. That includes port 3000 once this app starts: `http://<vps
+-ip>:3000` would serve the room in plaintext, bypassing TLS and handing out
+`tcf_vid` cookies without the `Secure` flag.
+
+**This deploy does not change that**, because enabling a firewall on a server
+running 45 sites needs its own inventory of which ports must stay open — get it
+wrong and you take down other people's apps, or lock yourself out of SSH.
+
+If you want the exposure closed, the safe options in order:
+
+1. Bind the app to loopback only. nginx proxies from `localhost:3000`, so
+   nothing else needs the public bind. Costs you the laptop-on-LAN failsafe,
+   which needs `0.0.0.0`.
+2. A single targeted rule: `ufw deny 3000/tcp` **without** `ufw enable` — no
+   effect while ufw is inactive, but in place if it is ever turned on.
+3. A full firewall audit for the whole box. Worth doing, separately, not on
+   the day.
 
 ## 10. DNS — two visits
 
@@ -360,11 +388,11 @@ dig +short A console.example.com @8.8.8.8
 dig +short AAAA console.example.com @1.1.1.1   # expect empty
 ```
 
-Only when both agree:
+Only when both agree, request the certificate:
 
 ```bash
-systemctl enable --now caddy
-journalctl -u caddy -f      # watch for "certificate obtained successfully"
+certbot --nginx -d console.example.com
+grep -A3 "live/stream" /etc/nginx/sites-enabled/console.example.com  # buffering off survived?
 ```
 
 ---
@@ -422,7 +450,7 @@ journalctl -u tcf -n 20 --no-pager | grep "Loaded room state"
 **Survives a hard kill:**
 
 ```bash
-systemctl kill -s KILL tcf && sleep 5 && systemctl status tcf
+pm2 stop tincity && pm2 start tincity && sleep 5 && pm2 describe tincity | grep status
 ```
 
 A phone with the page open recovers on its own in ~3s.
@@ -441,7 +469,7 @@ it with a real phone.
 
 ```bash
 sudo -u tcf -H bash -lc 'cd /srv/tcf/app && npm run reset:room'
-systemctl restart tcf
+pm2 restart tincity --update-env
 ```
 
 ---
@@ -461,7 +489,7 @@ console; everyone else gets the audience view and cannot escape it.
 It is per browser and per device. Clearing site data wipes it — so if you clear
 the projector's storage, re-enter with `?host=` afterwards.
 
-Rotating it: edit `/etc/tcf/tcf.env`, `systemctl restart tcf`. Every browser
+Rotating it: edit `/etc/tcf/tcf.env`, `pm2 restart tincity --update-env`. Every browser
 holding the old key drops to audience mode.
 
 ---
