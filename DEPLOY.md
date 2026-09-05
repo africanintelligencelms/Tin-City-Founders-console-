@@ -93,11 +93,9 @@ grep -r "Automatic-Reboot" /etc/apt/apt.conf.d/
 If any line says `"true"`, edit it to `"false"`. Patches still install; the box
 just will not reboot itself at 19:40 on event night.
 
-Service user — owns the app, no sudo:
-
-```bash
-adduser --system --group --shell /bin/bash --home /srv/tcf tcf
-```
+No service user: PM2 runs all ~21 apps on this box as root, and adding one
+app under a different user buys little while breaking that consistency. Noted
+as a deliberate trade, not an oversight.
 
 ---
 
@@ -120,9 +118,9 @@ in 20 and needs `--experimental-sqlite` in 22. On 24 it runs unflagged.
 Data lives **outside** the code directory — that is the whole point.
 
 ```bash
-mkdir -p /var/lib/tcf/data /var/lib/tcf/backups
-chown -R tcf:tcf /var/lib/tcf
-chmod 750 /var/lib/tcf
+mkdir -p /apps/tincity/.data /apps/.tincity-backups
+chown -R tcf:tcf /apps/.tincity-backups
+chmod 750 /apps/.tincity-backups
 
 mkdir -p /etc/tcf && touch /etc/tcf/tcf.env
 chown root:tcf /etc/tcf/tcf.env && chmod 640 /etc/tcf/tcf.env
@@ -155,29 +153,26 @@ phone, or burn your Gemini quota.
 ## 5. Code and first build
 
 ```bash
-sudo -u tcf -H git clone <repo-url> /srv/tcf/app
+git clone <repo-url> /apps/tincity
 ```
 
 Private repo? Generate a deploy key rather than typing a password:
-`sudo -u tcf -H ssh-keygen -t ed25519 -f /srv/tcf/.ssh/id_ed25519 -N ""`, then
+`ssh-keygen -t ed25519 -f /root/.ssh/tincity_deploy -N ""`, then
 add the `.pub` to the repo's Settings → Deploy keys as read-only.
 
-**The load-bearing symlink:**
+**Data directory** — created once, and `git pull` never touches it because
+`.data/` is gitignored:
 
 ```bash
-sudo -u tcf -H ln -s /var/lib/tcf/data /srv/tcf/app/.data
-ls -la /srv/tcf/app/.data     # expect .data -> /var/lib/tcf/data
+mkdir -p /apps/tincity/.data /apps/.tincity-backups
 ```
 
-Why this matters: `server.ts:93` computes `.data/` from `process.cwd()` and
-**creates it if missing**. If the symlink is ever absent the app does not error
-— it silently makes an empty real `.data/` inside the checkout, the room comes
-up blank, and your actual state sits untouched in `/var/lib/tcf/data`. A "we
-lost the room" panic with nothing lost. The deploy script asserts on this.
+Backups deliberately live **outside** `/apps/tincity`, so a careless
+`rm -rf` and re-clone loses the checkout but not the room.
 
 ```bash
-sudo -u tcf -H bash -lc 'cd /srv/tcf/app && git checkout vps-cutover-1 && npm ci --include=dev && npm run build'
-ls /srv/tcf/app/dist          # expect index.html, assets/, server.cjs
+bash -lc 'cd /apps/tincity && git checkout vps-cutover-1 && npm ci --include=dev && npm run build'
+ls /apps/tincity/dist          # expect index.html, assets/, server.cjs
 ```
 
 **`--include=dev` is mandatory** — vite, esbuild, tsx and typescript are all
@@ -191,7 +186,7 @@ npm would skip them and the build dies on "vite: not found".
 The box already runs ~21 Node apps under PM2 as root, with `pm2-logrotate`
 installed. Follow that convention rather than introducing systemd alongside it.
 
-`nano /srv/tcf/app/ecosystem.config.cjs`:
+`nano /apps/tincity/ecosystem.config.cjs`:
 
 ```js
 module.exports = {
@@ -200,7 +195,7 @@ module.exports = {
     script: 'dist/server.cjs',
     // LOAD-BEARING. process.cwd() resolves BOTH .data/ (server.ts:93) and
     // dist/ (server.ts:2156). Wrong cwd = empty room AND a blank page.
-    cwd: '/srv/tcf/app',
+    cwd: '/apps/tincity',
     instances: 1,          // never more than one: state is in-process memory
     autorestart: true,
     max_restarts: 0,       // 0 = unlimited; never give up mid-event
@@ -217,7 +212,7 @@ Secrets do **not** go in this file — it is in the repo. Put `HOST_KEY` and
 `GEMINI_API_KEY` in `/etc/tcf/tcf.env` and load them at start:
 
 ```bash
-cd /srv/tcf/app
+cd /apps/tincity
 set -a && . /etc/tcf/tcf.env && set +a
 pm2 start ecosystem.config.cjs --update-env
 pm2 save                 # persist the process list across reboots
@@ -240,30 +235,32 @@ after a reboot, even though PM2 itself does.
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-APP=/srv/tcf/app; DATA=/var/lib/tcf/data; BACKUPS=/var/lib/tcf/backups
+APP=/apps/tincity; DATA=/apps/tincity/.data; BACKUPS=/apps/.tincity-backups
+PORT=3000                 # must match ecosystem.config.cjs
 REF="${1:-main}"
 
-[ -L "$APP/.data" ] || { echo "FATAL: .data is not a symlink"; exit 1; }
-[ "$(readlink -f "$APP/.data")" = "$DATA" ] || { echo "FATAL: .data points elsewhere"; exit 1; }
+[ -d "$DATA" ] || { echo "FATAL: $DATA missing - refusing to deploy"; exit 1; }
 
-[ -f "$DATA/room_state.json" ] && cp -a "$DATA/room_state.json" \
-  "$BACKUPS/room_state-$(date -u +%Y%m%dT%H%M%SZ).json"
+if [ -f "$DATA/room_state.json" ]; then
+  cp -a "$DATA/room_state.json" "$BACKUPS/room_state-$(date -u +%Y%m%dT%H%M%SZ).json"
+fi
 find "$BACKUPS" -name 'room_state-*.json' -mtime +60 -delete 2>/dev/null || true
 
-sudo -u tcf -H git -C "$APP" fetch --all --tags --prune
-sudo -u tcf -H git -C "$APP" checkout "$REF"
-sudo -u tcf -H bash -lc "cd $APP && unset NODE_ENV && npm ci --include=dev && npm run build"
+git -C "$APP" fetch --all --tags --prune
+git -C "$APP" checkout "$REF"
+bash -lc "cd $APP && unset NODE_ENV && npm ci --include=dev && npm run build"
 [ -f "$APP/dist/index.html" ] && [ -f "$APP/dist/server.cjs" ] || { echo "FATAL: build incomplete"; exit 1; }
 
 pm2 restart tincity --update-env && sleep 3
 pm2 describe tincity | grep -q 'status.*online' || { pm2 logs tincity --lines 40 --nostream; exit 1; }
-curl -fsS localhost:3000/api/host/verify >/dev/null && echo "  api ok"
-echo "==> Deployed $(sudo -u tcf -H git -C "$APP" rev-parse --short HEAD)"
+curl -fsS "localhost:$PORT/api/host/verify" >/dev/null && echo "  api ok"
+echo "==> Deployed $(git -C "$APP" rev-parse --short HEAD)"
 ```
 
-It cannot wipe data: the only writes are inside `/srv/tcf/app`, where `.data` is
-a symlink out. Even `rm -rf` on the app directory would delete the link, not its
-target. A backup is taken before every deploy regardless.
+It cannot wipe data: `git checkout` and `npm run build` never touch `.data/`,
+which is gitignored. A backup is copied to `/apps/.tincity-backups` before every
+deploy regardless, so even a re-clone of the app directory leaves the room
+recoverable.
 
 **Do not deploy while the room is live.** `vite build` empties and rewrites
 `dist/`, which `express.static` reads on every request. For the 20–40s of the
@@ -468,7 +465,7 @@ it with a real phone.
 **Clear test data before the event:**
 
 ```bash
-sudo -u tcf -H bash -lc 'cd /srv/tcf/app && npm run reset:room'
+bash -lc 'cd /apps/tincity && npm run reset:room'
 pm2 restart tincity --update-env
 ```
 
