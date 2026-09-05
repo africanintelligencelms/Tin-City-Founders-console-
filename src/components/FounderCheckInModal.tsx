@@ -49,14 +49,18 @@ export const FounderCheckInModal: React.FC<FounderCheckInModalProps> = ({
       return;
     }
 
+    // Check-in is name + badge colour, nothing more. Everything else is carried
+    // through untouched from whatever the attendee already set in the profile
+    // sheet — and left genuinely blank if they never set it. Inventing a title,
+    // a tag or a town here is what made every directory card read the same.
     const profile: AttendeeProfile = {
       id: currentProfile?.id || `att-${Date.now()}`,
       name: name.trim(),
-      title: currentProfile?.title || 'Tin City Founder',
-      tags: currentProfile?.tags && currentProfile.tags.length > 0 ? currentProfile.tags : ['Founder / CEO'],
+      title: currentProfile?.title || '',
+      tags: currentProfile?.tags || [],
       bio: currentProfile?.bio || '',
       giveAsk: currentProfile?.giveAsk || '',
-      location: currentProfile?.location || 'Rayfield, Jos',
+      location: currentProfile?.location || '',
       avatarColor,
       checkedInAt: currentProfile?.checkedInAt || new Date().toISOString()
     };
