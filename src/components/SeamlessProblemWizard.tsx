@@ -24,6 +24,7 @@ import {
   Loader2 
 } from 'lucide-react';
 import { AttendeeProfile, CategoryInfo } from '../types';
+import { POPULAR_SKILLS, JOS_LOCATIONS } from '../data/profileTags';
 
 interface SeamlessProblemWizardProps {
   isOpen: boolean;
@@ -122,32 +123,6 @@ const SECTOR_OPTIONS = [
   }
 ];
 
-// Popular 1-tap skill badges for Jos builders
-const POPULAR_SKILLS = [
-  'IoT & Firmware',
-  'Solar / Electrical Eng',
-  'Full-Stack Web Dev',
-  'Mobile App (React Native/Flutter)',
-  'Agro Logistics',
-  'Fintech / Payment APIs',
-  'UI/UX Design',
-  'DevOps & Mesh Networking',
-  'Legal & Compliance',
-  'Growth & Distribution',
-  'Community Organizing',
-  'Data Analytics / AI'
-];
-
-// Plateau location tags to quickly append
-const JOS_LOCATIONS = [
-  'Jos South (Vom/Bukuru)',
-  'Rayfield',
-  'Anglo Jos',
-  'Jos North / Central',
-  'Bokkos / Mangu',
-  'Unijos Campus',
-  'Lamingo / Tudun Wada'
-];
 
 export const SeamlessProblemWizard: React.FC<SeamlessProblemWizardProps> = ({
   isOpen,
