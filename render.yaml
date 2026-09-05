@@ -1,3 +1,6 @@
+# FALLBACK ONLY — production is the Hostinger VPS. See DEPLOY.md.
+# Kept because it costs nothing and is the only non-laptop fallback.
+# Delete the Render service only after one successful live event on the VPS.
 # Render blueprint — one web service, no database.
 #
 # The app is a single long-running process: Express serves the built React
