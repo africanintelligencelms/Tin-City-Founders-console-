@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Vote, Users, Sparkles, Plus, ThumbsUp, CheckCircle2, ChevronRight,
-  ExternalLink, Search, Filter, Megaphone, Send, Award, Handshake, 
+  ExternalLink, Megaphone, Send, Award, Handshake, 
   MapPin, Shield, Check, Flame, Lightbulb, Heart, ArrowUpRight, Compass,
-  Radio, X, RefreshCw, Smartphone, Laptop, Eye
+  X, RefreshCw, Smartphone, Eye
 } from 'lucide-react';
 import { 
   PlateauProblem, AttendeeProfile, TrusteeCandidate, CategoryInfo, 
-  MyVotes, RoomSessionState, ToastNotification, NavigationTab, VotingRound
+  MyVotes, RoomSessionState, ToastNotification, NavigationTab, VotingRound, MyRoundBallot
 } from '../types';
 import { sounds } from '../utils/soundEffects';
 
@@ -23,6 +23,11 @@ interface AudienceParticipationViewProps {
   // contributing content (pitching a problem, nominating a trustee) is still
   // allowed in the phases that call for it - see the capability gates below.
   readOnly?: boolean;
+  // Explicit flag indicating whether voting is currently open
+  isVotingOpen?: boolean;
+  // Ballot sync for active rounds
+  myRoundBallot?: MyRoundBallot;
+  onSubmitBallot?: (selections: string[]) => Promise<void> | void;
   // The most recently archived round. Shown as a quiet summary so a phone that
   // was offline through the whole reveal window still learns what happened.
   lastRound?: VotingRound | null;
@@ -53,9 +58,13 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
     announcement: null,
     pinnedProblemId: undefined,
     allowAudienceNavigation: true,
+    activeRound: null,
     updatedAt: Date.now()
-  },
+  } as RoomSessionState,
   readOnly = false,
+  isVotingOpen: propsIsVotingOpen,
+  myRoundBallot,
+  onSubmitBallot,
   lastRound = null,
   syncStatus = 'connected',
   latencyMs = 18,
@@ -72,8 +81,6 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
 }) => {
   // Navigation for Free Roam mode
   const [audienceSubTab, setAudienceSubTab] = useState<'voting' | 'directory' | 'trustees' | 'squads'>('voting');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedSector, setSelectedSector] = useState('All');
   const [isSubmitPitchOpen, setIsSubmitPitchOpen] = useState(false);
   const [pitchTitle, setPitchTitle] = useState('');
   const [pitchDesc, setPitchDesc] = useState('');
@@ -85,6 +92,12 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
   const [nomineeTitle, setNomineeTitle] = useState('');
   const [nomineeWhy, setNomineeWhy] = useState('');
   const [nomineeContact, setNomineeContact] = useState('');
+
+  // Expanded problem descriptions toggle
+  const [expandedProblemIds, setExpandedProblemIds] = useState<Record<string, boolean>>({});
+  const toggleExpandProblem = (id: string) => {
+    setExpandedProblemIds(prev => ({ ...prev, [id]: !prev[id] }));
+  };
 
   // Floating live emoji bursts
   const [reactionBursts, setReactionBursts] = useState<Array<{ id: string; emoji: string; x: number }>>([]);
@@ -111,16 +124,8 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
     } catch {}
   };
 
-  // Filtered problems list
-  const filteredProblems = useMemo(() => {
-    return problems.filter(p => {
-      const matchSearch = !searchQuery || 
-        p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.description.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchSector = selectedSector === 'All' || p.category === selectedSector;
-      return matchSearch && matchSector;
-    });
-  }, [problems, searchQuery, selectedSector]);
+  // All problems
+  const filteredProblems = problems;
 
   // Current problem being pitched (pinned or top problem)
   const currentPitchProblem = useMemo(() => {
@@ -147,20 +152,37 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
     return null;
   }, [trusteeCandidates]);
 
+  // Effective attendees list: includes attendees from server plus the current checked-in attendee if not yet synced
+  const effectiveAttendees = useMemo(() => {
+    if (currentProfile && !attendees.some(a => a.id === currentProfile.id || a.name.toLowerCase() === currentProfile.name.toLowerCase())) {
+      return [currentProfile, ...attendees];
+    }
+    return attendees;
+  }, [attendees, currentProfile]);
+
   // ---- Capability gates -------------------------------------------------
-  // `readOnly` means "no host round is open". Voting stays entirely host-led
-  // in that state, but the room can still CONTRIBUTE content during the phases
-  // where contributing is the point of the phase.
-  //
-  // Every write the room screen offers funnels through the guards below, so a
-  // new button cannot accidentally bypass whichever lock governs it.
+  // Voting is open if isVotingOpen is explicitly true, or an active round is in 'open' status,
+  // or if readOnly is explicitly false, or phase is 'free_roam'.
+  const isVotingOpen = propsIsVotingOpen !== undefined
+    ? propsIsVotingOpen
+    : Boolean(
+        (sessionState.activeRound && sessionState.activeRound.status === 'open') ||
+        sessionState.activePhase === 'free_roam' ||
+        !readOnly
+      );
+
+  // Upvotes, sector votes and trustee endorsements: governed by isVotingOpen.
+  const votingLocked = !isVotingOpen;
+
+  // Background styling: reddish/yellowish/orange when voting is closed, clean neutral when open.
+  const pageBgClass = !isVotingOpen ? 'bg-[#FFF0E6]' : 'bg-[#FAF6EE]';
+  const stickyBgClass = !isVotingOpen ? 'bg-[#FFF0E6] border-orange-200/80' : 'bg-[#FAF6EE] border-stone-200/70';
+  const cardBorderClass = !isVotingOpen ? 'border-orange-200/80' : 'border-stone-200';
+
   const phase = sessionState.activePhase;
 
-  // Upvotes, sector votes and trustee endorsements: round-only.
-  const votingLocked = readOnly;
-
   // Contribution: open in the phase that calls for it, plus free roam.
-  const canSubmitProblem = !readOnly || phase === 'problem_pitch' || phase === 'free_roam';
+  const canSubmitProblem = !readOnly || phase === 'problem_pitch' || phase === 'voting' || phase === 'free_roam';
   const canNominateTrustee = !readOnly || phase === 'trustee_election' || phase === 'free_roam';
   // Squad joining is a commitment, not a ballot: forming squads IS the point of
   // the squad_commit phase, so it cannot be locked behind a voting round.
@@ -177,8 +199,8 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
     sounds.playTapSound();
     onNotify({
       type: 'info',
-      title: 'Voting is host-led',
-      message: 'Voting happens inside a host-opened round. The ballot takes over your screen when it opens.',
+      title: 'Voting is currently closed',
+      message: 'Upvoting is locked. The host will open live voting from the stage when ready.',
       duration: 3500
     });
   };
@@ -196,6 +218,9 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
   const guardedVoteProblem = (id: string, commit: boolean, name?: string) => {
     if (votingLocked) return blockedByRound();
     onVoteProblem(id, commit, name);
+    if (sessionState.activeRound && sessionState.activeRound.status === 'open' && onSubmitBallot) {
+      onSubmitBallot([id]);
+    }
   };
 
   // Squad commit/leave has its own gate. Kept separate from guardedVoteProblem
@@ -300,7 +325,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
   };
 
   return (
-    <div className="min-h-screen bg-[#FAF6EE] text-stone-900 flex flex-col font-sans pb-24 selection:bg-[#0D4734] selection:text-white relative overflow-x-hidden">
+    <div className={`min-h-screen ${pageBgClass} text-stone-900 flex flex-col font-sans pb-10 selection:bg-[#0D4734] selection:text-white relative overflow-x-clip transition-colors duration-300`}>
       {/* Floating Reaction Bursts Container */}
       <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
         {reactionBursts.map(b => (
@@ -346,7 +371,7 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
             </div>
           </div>
 
-          {/* Right Controls: Profile / Check-in & Switch to Console */}
+          {/* Right Controls: Profile / Check-in */}
           <div className="flex items-center gap-2">
             {currentProfile ? (
               <button
@@ -369,80 +394,55 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                 Check In
               </button>
             )}
-
-            {/* Switch to Full Console View */}
-            <button
-              onClick={onSwitchToFullConsole}
-              className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition cursor-pointer"
-              title="Switch to Full Desktop Console View"
-            >
-              <Laptop className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Stage Conductor Active Status Strip */}
-        <div className="bg-[#09251B] px-4 py-1.5 border-t border-emerald-900/60 flex items-center justify-between text-xs text-white/90">
-          <div className="flex items-center gap-1.5 truncate">
-            <Radio className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
-            <span className="text-[11px] font-mono text-emerald-300 uppercase font-bold shrink-0">
-              Stage Host:
-            </span>
-            <span className="font-display font-bold text-amber-200 truncate">
-              {sessionState.activePhase === 'welcome' && '1. Welcome & Founder Check-In'}
-              {sessionState.activePhase === 'problem_pitch' && '2. Problem Pitch Floor'}
-              {sessionState.activePhase === 'voting' && '3. Live Problem & Sector Voting'}
-              {sessionState.activePhase === 'trustee_election' && '4. 12 Founding Trustee Matrix (CAMA)'}
-              {sessionState.activePhase === 'squad_commit' && '5. Action Squad Lock-In'}
-              {sessionState.activePhase === 'free_roam' && '6. Free Roam Mode (Unlocked)'}
-            </span>
-          </div>
-
-          <div className="text-[10px] font-mono text-white/50 shrink-0 ml-2">
-            {problems.length} challenges · {attendees.length} in room
           </div>
         </div>
       </header>
 
       {/* Main Content Body */}
       <main className="max-w-xl mx-auto w-full px-4 pt-4 space-y-4">
-        {/* Status notice. Voting is always host-led outside a round, but the
-            banner must be honest about what the floor CAN do in this phase. */}
-        {readOnly && (
-          openFloorActions.length > 0 ? (
-            <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-600/30 flex items-start gap-2.5">
-              <Megaphone className="w-4 h-4 text-[#0D4734] shrink-0 mt-0.5" />
-              <div className="min-w-0">
-                <div className="text-[11px] font-mono font-bold uppercase tracking-wider text-[#0D4734]">
-                  The floor is open
+        {/* Live Voting Status Banner (Prominent indicator for Voting Open vs Voting Closed) */}
+        {isVotingOpen ? (
+          <div className="p-3.5 rounded-2xl bg-emerald-50 border-2 border-emerald-600/40 flex items-center justify-between shadow-xs transition-all duration-300">
+            <div className="flex items-center gap-3">
+              <span className="relative flex h-3.5 w-3.5 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-600"></span>
+              </span>
+              <div>
+                <div className="text-xs font-display font-black text-[#0D4734] uppercase tracking-wide flex items-center gap-1.5">
+                  <span>Voting is Open</span>
+                  {sessionState.activeRound?.title && (
+                    <span className="text-[11px] font-normal text-emerald-800 lowercase truncate max-w-[200px]">
+                      — {sessionState.activeRound.title}
+                    </span>
+                  )}
                 </div>
-                <p className="text-xs text-stone-700 mt-0.5">
-                  You can{' '}
-                  {openFloorActions.map((action, i) => (
-                    <React.Fragment key={action}>
-                      {i > 0 && (i === openFloorActions.length - 1 ? ' and ' : ', ')}
-                      <strong>{action}</strong>
-                    </React.Fragment>
-                  ))}
-                  {' '}right now. Voting still happens inside a host-opened round — the ballot
-                  takes over your screen when it opens.
+                <p className="text-xs text-emerald-900 font-medium mt-0.5">
+                  Upvoting is enabled! Tap <strong>Upvote</strong> on any challenge below to vote for it.
                 </p>
               </div>
             </div>
-          ) : (
-            <div className="p-3 rounded-2xl bg-stone-100 border border-stone-300 flex items-start gap-2.5">
-              <Eye className="w-4 h-4 text-stone-500 shrink-0 mt-0.5" />
-              <div className="min-w-0">
-                <div className="text-[11px] font-mono font-bold uppercase tracking-wider text-stone-500">
-                  Live room · view only
+            <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-black bg-[#0D4734] text-white shrink-0 shadow-xs">
+              LIVE
+            </span>
+          </div>
+        ) : (
+          <div className="p-3.5 rounded-2xl bg-orange-100/90 border-2 border-orange-300 text-orange-950 flex items-center justify-between shadow-xs transition-all duration-300">
+            <div className="flex items-center gap-3">
+              <span className="w-3.5 h-3.5 rounded-full bg-amber-600 shrink-0"></span>
+              <div>
+                <div className="text-xs font-display font-black text-amber-950 uppercase tracking-wide">
+                  Voting is Currently Closed
                 </div>
-                <p className="text-xs text-stone-600 mt-0.5">
-                  Everything here updates in real time. When it is time to vote, the host opens a
-                  round and the ballot takes over your screen.
+                <p className="text-xs text-amber-900 font-medium mt-0.5">
+                  Upvoting is locked. The host will open live voting from the stage when ready.
                 </p>
               </div>
             </div>
-          )
+            <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-black bg-amber-700 text-white shrink-0 shadow-xs">
+              CLOSED
+            </span>
+          </div>
         )}
 
         {/* Host Live Broadcast Announcement Card (If active) */}
@@ -608,15 +608,42 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
         {/* PHASE 2: PROBLEM PITCH FLOOR */}
         {sessionState.activePhase === 'problem_pitch' && (
           <div className="space-y-4">
-            {/* Spotlight Pitch Card */}
-            {currentPitchProblem ? (
-              <div className="bg-white rounded-2xl p-5 border-2 border-[#0D4734] shadow-md space-y-3">
+            {/* Quick Pitch Submission Action Header */}
+            <div className="bg-gradient-to-br from-[#0D4734] to-[#09251B] text-white rounded-2xl p-4 shadow-sm space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase bg-amber-400 text-stone-950 px-2 py-0.5 rounded font-black">
+                  Floor Pitches Open
+                </span>
+                <span className="text-xs font-mono font-bold text-amber-200">
+                  {problems.length} {problems.length === 1 ? 'Pitch' : 'Pitches'} Submitted
+                </span>
+              </div>
+              <h2 className="text-base font-display font-black text-white leading-snug">
+                60-Second Plateau Problem Pitches
+              </h2>
+              <p className="text-xs text-white/85 leading-relaxed">
+                Step up to the floor! Pitch challenges facing Plateau State or browse and support proposals submitted by other founders.
+              </p>
+              <button
+                onClick={guardedOpenPitch}
+                disabled={!canSubmitProblem}
+                className="disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit w-full py-2.5 px-4 rounded-xl bg-amber-400 hover:bg-amber-300 text-stone-950 text-xs font-display font-black flex items-center justify-center gap-2 shadow-sm cursor-pointer active:scale-95 transition mt-1"
+              >
+                <Plus className="w-4 h-4 text-stone-950 stroke-[3]" />
+                <span>Submit a 60-Second Plateau Problem Pitch</span>
+              </button>
+            </div>
+
+            {/* Spotlight Pitch Card (when a pitch is actively pinned on the stage mic) */}
+            {sessionState.pinnedProblemId && currentPitchProblem && (
+              <div className="bg-white rounded-2xl p-5 border-2 border-amber-500 ring-2 ring-amber-400/20 shadow-md space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-amber-400 text-stone-950 font-black">
+                  <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-amber-400 text-stone-950 font-black flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-red-600 animate-pulse" />
                     🎙️ CURRENT STAGE PITCH
                   </span>
                   <span className="text-xs font-mono font-bold text-stone-500">
-                    {currentPitchProblem.upvotes} Upvotes · {currentPitchProblem.commitments} Squad
+                    {currentPitchProblem.upvotes} Upvotes
                   </span>
                 </div>
 
@@ -624,9 +651,9 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                   {currentPitchProblem.title}
                 </h2>
 
-                <p className="text-xs text-stone-700 leading-relaxed">
+                <div className="text-xs text-stone-700 leading-relaxed whitespace-pre-line">
                   {currentPitchProblem.description}
-                </p>
+                </div>
 
                 <div className="flex flex-wrap items-center gap-2 text-xs pt-1">
                   <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-[#0D4734] font-bold text-[11px]">
@@ -638,113 +665,176 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                 </div>
 
                 {/* 1-Tap Fast Pitch Support Buttons */}
-                <div className="pt-2 grid grid-cols-2 gap-2 border-t border-stone-100">
+                <div className="pt-2 border-t border-stone-100">
                   <button
                     onClick={() => guardedVoteProblem(currentPitchProblem.id, false)}
                     disabled={votingLocked}
-                    className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit py-2.5 rounded-xl border text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
+                    className={`w-full py-2.5 rounded-xl border text-xs font-display font-black flex items-center justify-center gap-1.5 transition active:scale-95 ${
                       myVotes.problems.includes(currentPitchProblem.id)
-                        ? 'bg-[#0D4734] text-white border-[#0D4734]'
-                        : 'bg-stone-100 hover:bg-stone-200 text-stone-800 border-stone-300'
+                        ? 'bg-[#0D4734] text-white border-[#0D4734] cursor-pointer'
+                        : votingLocked
+                          ? 'bg-stone-100/90 text-stone-400 border-stone-200 cursor-not-allowed'
+                          : 'bg-stone-100 hover:bg-emerald-50 text-stone-800 border-stone-300 hover:border-emerald-500 cursor-pointer'
                     }`}
                   >
-                    <ThumbsUp className="w-4 h-4" />
-                    <span>{myVotes.problems.includes(currentPitchProblem.id) ? 'Upvoted ✓' : 'Upvote Pitch'}</span>
-                  </button>
-
-                  <button
-                    onClick={() => guardedJoinSquad(currentPitchProblem.id)}
-                    disabled={!canJoinSquad}
-                    className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit py-2.5 rounded-xl text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
-                      myVotes.squads.includes(currentPitchProblem.id)
-                        ? 'bg-amber-500 text-stone-950 shadow-sm'
-                        : 'bg-[#0D4734] hover:bg-[#166E52] text-white shadow-sm'
-                    }`}
-                  >
-                    <Handshake className="w-4 h-4" />
-                    <span>{myVotes.squads.includes(currentPitchProblem.id) ? 'In Squad ✓' : 'Join Action Squad'}</span>
+                    <ThumbsUp className={`w-4 h-4 ${myVotes.problems.includes(currentPitchProblem.id) ? 'fill-current text-white' : ''}`} />
+                    <span>
+                      {myVotes.problems.includes(currentPitchProblem.id)
+                        ? `Upvoted ✓ (${currentPitchProblem.upvotes})`
+                        : votingLocked
+                          ? `Vote Closed (${currentPitchProblem.upvotes})`
+                          : `Upvote Pitch (${currentPitchProblem.upvotes})`}
+                    </span>
                   </button>
                 </div>
               </div>
-            ) : (
-              <div className="p-6 text-center bg-white rounded-2xl border border-stone-200 text-stone-500 text-xs">
-                No active pitches yet. Be the first to pitch below!
-              </div>
             )}
 
-            {/* Submit Quick 60s Pitch Button */}
-            <button
-              onClick={guardedOpenPitch}
-              disabled={!canSubmitProblem}
-                    className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit w-full py-3 rounded-xl bg-white border-2 border-dashed border-[#0D4734]/50 hover:border-[#0D4734] text-[#0D4734] text-xs font-display font-black flex items-center justify-center gap-2 shadow-xs cursor-pointer active:scale-95 transition`}
-            >
-              <Plus className="w-4 h-4 text-emerald-700" />
-              <span>Submit a 60-Second Plateau Problem Pitch</span>
-            </button>
+            {/* Submissions Section Heading and Search / Sector Filters */}
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-display font-black uppercase text-stone-800 flex items-center gap-1.5">
+                  <span>All Floor Pitch Submissions</span>
+                  <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 text-[#0D4734] font-mono text-[10px] font-bold">
+                    {filteredProblems.length}
+                  </span>
+                </h3>
+                {problems.length > 0 && (
+                  <span className="text-[10px] font-mono text-stone-500">
+                    Live room feed
+                  </span>
+                )}
+              </div>
+
+            </div>
+
+            {/* List of ALL Submitted Problems & Pitches */}
+            <div className="space-y-3">
+              {filteredProblems.length > 0 ? (
+                filteredProblems.map((prob, idx) => {
+                  const hasUpvoted = myVotes.problems.includes(prob.id);
+                  const hasCommitted = myVotes.squads.includes(prob.id);
+                  const isPinned = sessionState.pinnedProblemId === prob.id;
+                  const isExpanded = !!expandedProblemIds[prob.id];
+                  const isLongDesc = prob.description.length > 180 || prob.description.includes('\n');
+
+                  return (
+                    <div
+                      key={prob.id}
+                      className={`bg-white rounded-2xl p-4 border transition-all shadow-xs space-y-2.5 ${
+                        isPinned
+                          ? 'border-amber-400 ring-2 ring-amber-400/20'
+                          : hasCommitted
+                          ? 'border-emerald-600 ring-2 ring-emerald-500/20'
+                          : hasUpvoted
+                          ? 'border-emerald-700/60'
+                          : 'border-stone-200'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-stone-100 text-stone-600">
+                            #{idx + 1}
+                          </span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-50 text-[#0D4734] font-bold">
+                            {prob.category}
+                          </span>
+                          {isPinned && (
+                            <span className="text-[10px] font-mono font-black px-2 py-0.5 rounded-full bg-amber-400 text-stone-950">
+                              🎙️ On Stage
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <h3 className="text-sm font-display font-black text-[#0D4734] leading-snug">
+                        {prob.title}
+                      </h3>
+
+                      <div className={`text-xs text-stone-700 leading-relaxed whitespace-pre-line ${
+                        !isExpanded && isLongDesc ? 'line-clamp-3' : ''
+                      }`}>
+                        {prob.description}
+                      </div>
+
+                      {isLongDesc && (
+                        <button
+                          onClick={() => toggleExpandProblem(prob.id)}
+                          className="text-[11px] font-bold text-[#0D4734] hover:underline cursor-pointer flex items-center gap-1"
+                        >
+                          <span>{isExpanded ? 'Show less' : 'Show full pitch details'}</span>
+                        </button>
+                      )}
+
+                      <div className="flex items-center justify-between pt-1 text-[11px] text-stone-500 font-mono">
+                        <span>Pitched by: <strong>{prob.submittedBy}</strong></span>
+                      </div>
+
+                      {/* 1-Tap Fast Pitch Support Buttons */}
+                      <div className="pt-2 border-t border-stone-100">
+                        <button
+                          onClick={() => guardedVoteProblem(prob.id, false)}
+                          disabled={votingLocked}
+                          className={`w-full py-2 px-3 rounded-xl border text-xs font-display font-black flex items-center justify-center gap-1.5 transition active:scale-95 ${
+                            hasUpvoted
+                              ? 'bg-[#0D4734] text-white border-[#0D4734] cursor-pointer'
+                              : votingLocked
+                                ? 'bg-stone-100/90 text-stone-400 border-stone-200 cursor-not-allowed'
+                                : 'bg-stone-50 hover:bg-emerald-50 text-stone-800 border-stone-200 hover:border-emerald-500 cursor-pointer'
+                          }`}
+                        >
+                          <ThumbsUp className={`w-3.5 h-3.5 ${hasUpvoted ? 'fill-current text-white' : ''}`} />
+                          <span>
+                            {hasUpvoted
+                              ? `Upvoted (${prob.upvotes})`
+                              : votingLocked
+                                ? `Vote Closed (${prob.upvotes})`
+                                : `Upvote (${prob.upvotes})`}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="p-8 text-center bg-white rounded-2xl border border-stone-200 space-y-3">
+                  <div className="w-12 h-12 rounded-full bg-emerald-50 text-[#0D4734] flex items-center justify-center mx-auto">
+                    <Sparkles className="w-6 h-6 text-amber-500" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-display font-black text-stone-800">
+                      No Pitches Submitted Yet
+                    </h4>
+                    <p className="text-xs text-stone-500 mt-1 max-w-xs mx-auto">
+                      Step up to the floor and pitch a startup challenge for Plateau State!
+                    </p>
+                  </div>
+                  <button
+                    onClick={guardedOpenPitch}
+                    disabled={!canSubmitProblem}
+                    className="disabled:opacity-40 px-4 py-2 rounded-xl bg-[#0D4734] text-white text-xs font-display font-black cursor-pointer shadow-sm active:scale-95 transition"
+                  >
+                    Pitch the First Problem
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
         {/* PHASE 3: LIVE PROBLEM VOTING & SECTOR PRIORITIES */}
         {sessionState.activePhase === 'voting' && (
           <div className="space-y-4">
-            {/* Sector Priority Carousel */}
-            <div className="bg-white rounded-2xl p-3.5 border border-stone-200 shadow-xs space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-display font-bold uppercase text-stone-700">
-                  Tap to Prioritize Plateau Sectors:
-                </span>
-                <span className="text-[10px] font-mono text-stone-500">1 vote per sector</span>
-              </div>
-
-              <div className="flex gap-1.5 overflow-x-auto pb-1.5 scrollbar-none">
-                {categories.map(cat => {
-                  const isVoted = myVotes.categories.includes(cat.name);
-                  return (
-                    <button
-                      key={cat.name}
-                      onClick={() => guardedVoteCategory(cat.name)}
-                      disabled={votingLocked}
-                      className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit px-3 py-1.5 rounded-xl border text-xs font-display font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                        isVoted
-                          ? 'bg-[#0D4734] text-white border-[#0D4734] shadow-xs scale-[1.02]'
-                          : 'bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200'
-                      }`}
-                    >
-                      <span>{cat.name}</span>
-                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
-                        isVoted ? 'bg-amber-400 text-stone-950' : 'bg-stone-200 text-stone-600'
-                      }`}>
-                        {cat.upvotes}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Search & Sector Filter */}
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Search className="w-4 h-4 text-stone-400 absolute left-3 top-2.5" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  placeholder="Search challenges..."
-                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-stone-200 bg-white text-xs focus:outline-hidden focus:ring-2 focus:ring-[#0D4734]"
-                />
-              </div>
-
-              <select
-                value={selectedSector}
-                onChange={e => setSelectedSector(e.target.value)}
-                className="px-3 py-2 rounded-xl border border-stone-200 bg-white text-xs font-display font-bold text-stone-700 focus:outline-hidden"
+            {/* Sticky Submit Challenge Container (Options scroll cleanly behind) */}
+            <div className={`sticky top-[52px] z-30 -mx-4 px-4 py-2.5 border-b shadow-xs transition-colors duration-200 ${stickyBgClass}`}>
+              <button
+                onClick={guardedOpenPitch}
+                disabled={!canSubmitProblem}
+                className="disabled:opacity-40 disabled:cursor-not-allowed w-full py-2.5 rounded-xl bg-white border-2 border-[#0D4734] hover:bg-emerald-50/70 text-[#0D4734] text-xs font-display font-black flex items-center justify-center gap-1.5 shadow-xs cursor-pointer active:scale-95 transition"
               >
-                <option value="All">All Sectors</option>
-                {categories.map(c => (
-                  <option key={c.name} value={c.name}>{c.name}</option>
-                ))}
-              </select>
+                <Plus className="w-4 h-4 text-emerald-700 stroke-[2.5]" />
+                <span>Submit Another Plateau Challenge</span>
+              </button>
             </div>
 
             {/* Problem Cards Deck */}
@@ -752,6 +842,8 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
               {filteredProblems.map((prob, idx) => {
                 const hasUpvoted = myVotes.problems.includes(prob.id);
                 const hasCommitted = myVotes.squads.includes(prob.id);
+                const isExpanded = !!expandedProblemIds[prob.id];
+                const isLongDesc = prob.description.length > 180 || prob.description.includes('\n');
 
                 return (
                   <div 
@@ -773,52 +865,52 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                           {prob.category}
                         </span>
                       </div>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full font-mono ${
-                        prob.status === 'Active Squad' ? 'bg-amber-100 text-amber-900' : 'bg-stone-100 text-stone-600'
-                      }`}>
-                        {prob.status}
-                      </span>
                     </div>
 
                     <h3 className="text-sm font-display font-black text-[#0D4734] leading-snug">
                       {prob.title}
                     </h3>
 
-                    <p className="text-xs text-stone-600 leading-relaxed line-clamp-2">
+                    <div className={`text-xs text-stone-700 leading-relaxed whitespace-pre-line ${
+                      !isExpanded && isLongDesc ? 'line-clamp-3' : ''
+                    }`}>
                       {prob.description}
-                    </p>
-
-                    <div className="flex items-center justify-between pt-1 text-[11px] text-stone-500 font-mono">
-                      <span>Submitted by {prob.submittedBy.split(' ')[0]}</span>
-                      <span>{prob.commitments} founders in squad</span>
                     </div>
 
-                    {/* Action Buttons: 1-Tap Upvote & 1-Tap Squad Commit */}
-                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-stone-100">
+                    {isLongDesc && (
+                      <button
+                        onClick={() => toggleExpandProblem(prob.id)}
+                        className="text-[11px] font-bold text-[#0D4734] hover:underline cursor-pointer flex items-center gap-1"
+                      >
+                        <span>{isExpanded ? 'Show less' : 'Show full points / pitch'}</span>
+                      </button>
+                    )}
+
+                    <div className="flex items-center justify-between pt-1 text-[11px] text-stone-500 font-mono">
+                      <span>Submitted by <strong>{prob.submittedBy}</strong></span>
+                    </div>
+
+                    {/* Action Buttons: 1-Tap Upvote */}
+                    <div className="pt-2 border-t border-stone-100">
                       <button
                         onClick={() => guardedVoteProblem(prob.id, false)}
                         disabled={votingLocked}
-                        className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit py-2 px-3 rounded-xl border text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
+                        className={`w-full py-2.5 px-3 rounded-xl border text-xs font-display font-black flex items-center justify-center gap-1.5 transition active:scale-95 ${
                           hasUpvoted
-                            ? 'bg-[#0D4734] text-white border-[#0D4734]'
-                            : 'bg-stone-50 hover:bg-stone-100 text-stone-800 border-stone-200'
+                            ? 'bg-[#0D4734] text-white border-[#0D4734] cursor-pointer'
+                            : votingLocked
+                              ? 'bg-stone-100/90 text-stone-400 border-stone-200 cursor-not-allowed'
+                              : 'bg-stone-50 hover:bg-emerald-50 text-stone-800 border-stone-200 hover:border-emerald-500 cursor-pointer'
                         }`}
                       >
-                        <ThumbsUp className="w-3.5 h-3.5" />
-                        <span>{hasUpvoted ? `Upvoted (${prob.upvotes})` : `Upvote (${prob.upvotes})`}</span>
-                      </button>
-
-                      <button
-                        onClick={() => guardedJoinSquad(prob.id)}
-                        disabled={!canJoinSquad}
-                        className={`disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit py-2 px-3 rounded-xl text-xs font-display font-black flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95 ${
-                          hasCommitted
-                            ? 'bg-amber-500 text-stone-950 font-black shadow-xs'
-                            : 'bg-[#0D4734] hover:bg-[#166E52] text-white shadow-xs'
-                        }`}
-                      >
-                        <Handshake className="w-3.5 h-3.5" />
-                        <span>{hasCommitted ? 'In Squad ✓' : 'Join Squad'}</span>
+                        <ThumbsUp className={`w-3.5 h-3.5 ${hasUpvoted ? 'fill-current text-white' : ''}`} />
+                        <span>
+                          {hasUpvoted
+                            ? `Upvoted (${prob.upvotes})`
+                            : votingLocked
+                              ? `Vote Closed (${prob.upvotes})`
+                              : `Upvote (${prob.upvotes})`}
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -996,21 +1088,86 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
             {/* Render selected free roam sub-tab */}
             {audienceSubTab === 'voting' && (
               <div className="space-y-3">
-                {problems.map(prob => (
-                  <div key={prob.id} className="bg-white rounded-2xl p-4 border border-stone-200 space-y-2">
-                    <h3 className="text-xs font-display font-black text-[#0D4734]">{prob.title}</h3>
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="font-mono text-stone-500">{prob.upvotes} upvotes</span>
-                      <button
-                        onClick={() => guardedVoteProblem(prob.id, false)}
-                        disabled={votingLocked}
-                        className="disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit px-3 py-1 bg-[#0D4734] text-white rounded-lg font-bold text-xs"
-                      >
-                        Upvote
-                      </button>
+                {/* Sticky Submit Challenge Container in Free Roam */}
+                <div className={`sticky top-[52px] z-30 -mx-4 px-4 py-2.5 border-b shadow-xs transition-colors duration-200 ${stickyBgClass}`}>
+                  <button
+                    onClick={guardedOpenPitch}
+                    disabled={!canSubmitProblem}
+                    className="disabled:opacity-40 disabled:cursor-not-allowed w-full py-2.5 rounded-xl bg-white border-2 border-[#0D4734] hover:bg-emerald-50/70 text-[#0D4734] text-xs font-display font-black flex items-center justify-center gap-1.5 shadow-xs cursor-pointer active:scale-95 transition"
+                  >
+                    <Plus className="w-4 h-4 text-emerald-700 stroke-[2.5]" />
+                    <span>Submit a Plateau Problem Pitch</span>
+                  </button>
+                </div>
+
+                {problems.map((prob, idx) => {
+                  const hasUpvoted = myVotes.problems.includes(prob.id);
+                  const hasCommitted = myVotes.squads.includes(prob.id);
+                  const isExpanded = !!expandedProblemIds[prob.id];
+                  const isLongDesc = prob.description.length > 180 || prob.description.includes('\n');
+
+                  return (
+                    <div key={prob.id} className="bg-white rounded-2xl p-4 border border-stone-200 space-y-2.5 shadow-xs">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-stone-100 text-stone-600">
+                            #{idx + 1}
+                          </span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-50 text-[#0D4734] font-bold">
+                            {prob.category}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono text-stone-500 font-bold">
+                          {prob.upvotes} upvotes
+                        </span>
+                      </div>
+
+                      <h3 className="text-xs font-display font-black text-[#0D4734] leading-snug">{prob.title}</h3>
+
+                      <div className={`text-xs text-stone-700 leading-relaxed whitespace-pre-line ${
+                        !isExpanded && isLongDesc ? 'line-clamp-3' : ''
+                      }`}>
+                        {prob.description}
+                      </div>
+
+                      {isLongDesc && (
+                        <button
+                          onClick={() => toggleExpandProblem(prob.id)}
+                          className="text-[11px] font-bold text-[#0D4734] hover:underline cursor-pointer flex items-center gap-1"
+                        >
+                          <span>{isExpanded ? 'Show less' : 'Show full points / pitch'}</span>
+                        </button>
+                      )}
+
+                      <div className="text-[11px] text-stone-500 font-mono">
+                        Pitched by: <strong>{prob.submittedBy}</strong>
+                      </div>
+
+                      <div className="pt-1 border-t border-stone-100">
+                        <button
+                          onClick={() => guardedVoteProblem(prob.id, false)}
+                          disabled={votingLocked}
+                          className={`w-full py-2 px-3 rounded-xl border text-xs font-display font-black flex items-center justify-center gap-1.5 transition active:scale-95 ${
+                            hasUpvoted
+                              ? 'bg-[#0D4734] text-white border-[#0D4734] cursor-pointer'
+                              : votingLocked
+                                ? 'bg-stone-100/90 text-stone-400 border-stone-200 cursor-not-allowed'
+                                : 'bg-stone-50 hover:bg-emerald-50 text-stone-800 border-stone-200 hover:border-emerald-500 cursor-pointer'
+                          }`}
+                        >
+                          <ThumbsUp className={`w-3.5 h-3.5 ${hasUpvoted ? 'fill-current text-white' : ''}`} />
+                          <span>
+                            {hasUpvoted
+                              ? `Upvoted (${prob.upvotes})`
+                              : votingLocked
+                                ? `Vote Closed (${prob.upvotes})`
+                                : `Upvote (${prob.upvotes})`}
+                          </span>
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -1049,15 +1206,21 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
 
             {audienceSubTab === 'directory' && (
               <div className="space-y-2">
-                {attendees.map(att => (
-                  <div key={att.id} className="bg-white rounded-xl p-3 border border-stone-200 flex items-center justify-between">
-                    <div>
-                      <div className="text-xs font-bold text-stone-900">{att.name}</div>
-                      <div className="text-[11px] text-stone-600">{att.title}</div>
-                    </div>
-                    <span className="text-[10px] font-mono text-stone-500">{att.location}</span>
+                {effectiveAttendees.length === 0 ? (
+                  <div className="p-4 text-center bg-white rounded-2xl border border-stone-200 text-stone-500 text-xs">
+                    No founders have checked in yet. Tap <strong>Check In</strong> at the top to add your profile to the directory!
                   </div>
-                ))}
+                ) : (
+                  effectiveAttendees.map(att => (
+                    <div key={att.id} className="bg-white rounded-xl p-3 border border-stone-200 flex items-center justify-between">
+                      <div>
+                        <div className="text-xs font-bold text-stone-900">{att.name}</div>
+                        <div className="text-[11px] text-stone-600">{att.title}</div>
+                      </div>
+                      <span className="text-[10px] font-mono text-stone-500">{att.location}</span>
+                    </div>
+                  ))
+                )}
               </div>
             )}
 
@@ -1074,33 +1237,6 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
           </div>
         )}
       </main>
-
-      {/* Persistent Bottom Live Reaction Bar */}
-      <div className="fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-stone-200 shadow-xl px-4 py-2.5">
-        <div className="max-w-xl mx-auto flex items-center justify-between gap-1 sm:gap-2">
-          <span className="text-[11px] font-display font-black text-stone-600 hidden xs:inline shrink-0">
-            React:
-          </span>
-
-          {/* Quick Reaction Emojis */}
-          {[
-            { emoji: '🔥', label: 'Fire' },
-            { emoji: '💡', label: 'Brilliant' },
-            { emoji: '👏', label: 'Applause' },
-            { emoji: '🚀', label: 'Build' },
-            { emoji: '⭐', label: 'Star' }
-          ].map(r => (
-            <button
-              key={r.emoji}
-              onClick={() => handleSendReaction(r.emoji)}
-              className="flex-1 py-1.5 px-2 rounded-xl bg-stone-100 hover:bg-stone-200 active:bg-amber-100 text-lg sm:text-xl flex items-center justify-center transition cursor-pointer active:scale-125 select-none"
-              title={`Send ${r.label} reaction to stage`}
-            >
-              <span>{r.emoji}</span>
-            </button>
-          ))}
-        </div>
-      </div>
 
       {/* Submit Pitch Modal */}
       {isSubmitPitchOpen && (
@@ -1155,8 +1291,8 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
                 <textarea
                   value={pitchDesc}
                   onChange={e => setPitchDesc(e.target.value)}
-                  rows={3}
-                  placeholder="What is broken in Jos / Plateau, and what kind of startup solution or squad can fix it?"
+                  rows={4}
+                  placeholder="Describe the challenge, key bottlenecks, or action points. Numbered or bulleted points are welcome!"
                   required
                   className="w-full px-3 py-2 rounded-xl border border-stone-300 bg-white text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-[#0D4734] resize-none"
                 />

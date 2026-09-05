@@ -735,15 +735,6 @@ export const ProblemVoting: React.FC<ProblemVotingProps> = ({
                             </button>
                           )}
                         </div>
-                        
-                        <span className={`text-[10px] font-display font-black tracking-wider px-2.5 py-1 rounded-full uppercase border-2 border-[#09251B] ${
-                          prob.status === 'Active Squad' ? 'bg-[#E5A93C] text-[#09251B]' :
-                          prob.status === 'Prototype Built' ? 'bg-[#FAF8F4] text-[#09251B]' :
-                          prob.status === 'Squad Forming' ? 'bg-[#EBF3EF] text-[#0D4734]' :
-                          'bg-[#FAF8F4] text-[#09251B]/70 border-[#09251B]/30'
-                        }`}>
-                          {prob.status}
-                        </span>
                       </div>
 
                       {/* Problem Content */}
@@ -794,27 +785,6 @@ export const ProblemVoting: React.FC<ProblemVotingProps> = ({
                         >
                           <ThumbsUp className={`w-3.5 h-3.5 ${hasVoted ? 'fill-current text-[#09251B]' : 'text-[#0D4734]'}`} />
                           <span>{prob.upvotes}</span>
-                        </button>
-
-                        {/* Join / Commit Squad Button */}
-                        <button
-                          onClick={(e) => {
-                            triggerVoteAnimation(e, {
-                              text: '⚡ Squad Formation',
-                              type: 'squad',
-                              milestone: true
-                            });
-                            setTargetProblemForCommit(prob);
-                            setIsCommitModalOpen(true);
-                          }}
-                          className={`px-3.5 py-2 rounded-xl text-xs font-display font-black tracking-wide transition-all duration-150 flex items-center gap-1.5 cursor-pointer border ${
-                            hasCommitted
-                              ? 'bg-[#EBF3EF] text-[#0D4734] border-[#0D4734]/30 shadow-xs'
-                              : 'bg-[#0D4734] hover:bg-[#125B43] text-[#FAF6EE] border-[#09251B] shadow-sm hover:shadow-md'
-                          } active:scale-95`}
-                        >
-                          <Users className="w-3.5 h-3.5 text-[#E5A93C]" />
-                          <span>{hasCommitted ? 'Joined' : 'Join Squad'} ({prob.commitments})</span>
                         </button>
                       </div>
 

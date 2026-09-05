@@ -166,7 +166,13 @@ export default function App() {
   const applyServerSnapshot = (data: any) => {
     if (!data) return;
     if (data.problems && Array.isArray(data.problems)) setProblems(data.problems);
-    if (data.attendees && Array.isArray(data.attendees)) setAttendees(data.attendees);
+    if (data.attendees && Array.isArray(data.attendees)) {
+      if (currentProfile && !data.attendees.some((a: AttendeeProfile) => a.id === currentProfile.id || a.name.toLowerCase() === currentProfile.name.toLowerCase())) {
+        setAttendees([currentProfile, ...data.attendees]);
+      } else {
+        setAttendees(data.attendees);
+      }
+    }
     if (data.trusteeCandidates && Array.isArray(data.trusteeCandidates)) setTrusteeCandidates(data.trusteeCandidates);
     if (data.categories && Array.isArray(data.categories)) setLiveCategories(data.categories);
     if (data.sessionState) setRoomSessionState(data.sessionState);
@@ -336,7 +342,14 @@ export default function App() {
     try {
       const savedProfile = localStorage.getItem('tcf_my_profile');
       if (savedProfile) {
-        setCurrentProfile(JSON.parse(savedProfile));
+        const parsed = JSON.parse(savedProfile);
+        setCurrentProfile(parsed);
+        // Ensure server also registers this attendee in case of a fresh server session
+        fetch('/api/attendees', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(parsed)
+        }).catch(() => {});
       } else {
         // First-time visitor walking in: prompt check-in modal
         setIsFirstVisit(true);
@@ -764,6 +777,22 @@ export default function App() {
       if (data?.myVotes) applyMyVotes(data.myVotes);
       if (data?.problems && Array.isArray(data.problems)) setProblems(data.problems);
 
+      // If a live voting round is open, also sync with round ballot
+      if (roomSessionState.activeRound && roomSessionState.activeRound.status === 'open') {
+        const roundId = roomSessionState.activeRound.id;
+        const selections = retract
+          ? (myRoundBallot.selections || []).filter(s => s !== id)
+          : [id];
+        postRound(
+          '/api/round/vote',
+          'POST',
+          { roundId, selections, voterName: collaboratorName }
+        ).then(roundData => {
+          if (roundData?.round) applyRound(roundData.round);
+          if (roundData?.myBallot) setMyRoundBallot(roundData.myBallot);
+        }).catch(err => console.error('Round vote sync failed:', err));
+      }
+
       if (res.status === 409) {
         addToast({
           type: 'info',
@@ -1042,26 +1071,18 @@ export default function App() {
   const totalVotesCount = problems.reduce((sum, p) => sum + p.upvotes, 0);
   const totalSquadsCount = problems.reduce((sum, p) => sum + p.commitments, 0);
 
+  const isVotingOpen = Boolean(
+    (roomSessionState.activeRound && roomSessionState.activeRound.status === 'open') ||
+    roomSessionState.activePhase === 'free_roam'
+  );
+
   return (
     <VotingParticleProvider>
       {audienceOnly ? (
-        <div className="min-h-screen bg-[#071912] text-[#FAF6EE]">
-          {/* A live round takes the phone over; outside one, the room view is the idle screen. */}
-          {roomSessionState.activeRound ? (
-            <RoundTakeover
-              round={roomSessionState.activeRound}
-              myBallot={myRoundBallot}
-              onSubmitBallot={handleSubmitBallot}
-              voterName={currentProfile?.name}
-              syncStatus={syncStatus}
-              onReconnect={handleManualReconnect}
-            />
-          ) : (
+        <div className={`min-h-screen ${!isVotingOpen ? 'bg-[#FFF0E6]' : 'bg-[#FAF6EE]'} text-stone-900 transition-colors duration-300`}>
           <AudienceParticipationView
-            /* Idle room screen: all VOTING happens inside a host round, but the
-               floor can still pitch problems and nominate trustees in the
-               phases where that is the point. */
-            readOnly
+            readOnly={!isVotingOpen}
+            isVotingOpen={isVotingOpen}
             sessionState={roomSessionState}
             lastRound={lastRound}
             problems={problems}
@@ -1070,6 +1091,8 @@ export default function App() {
             trusteeCandidates={trusteeCandidates}
             currentProfile={currentProfile}
             myVotes={myVotes}
+            myRoundBallot={myRoundBallot}
+            onSubmitBallot={handleSubmitBallot}
             onVoteProblem={handleVote}
             onVoteCategory={handleVoteCategory}
             onVoteTrustee={handleVoteTrustee}
@@ -1083,7 +1106,6 @@ export default function App() {
             onReconnect={handleManualReconnect}
             onNotify={addToast}
           />
-          )}
 
           {/* Profile / Check-in Modal */}
           <FounderCheckInModal
