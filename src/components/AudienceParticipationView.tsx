@@ -161,13 +161,12 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
   }, [attendees, currentProfile]);
 
   // ---- Capability gates -------------------------------------------------
-  // Voting is open if isVotingOpen is explicitly true, or an active round is in 'open' status,
-  // or if readOnly is explicitly false, or phase is 'free_roam'.
+  // Voting is host-driven: an open round, nothing else. Free roam does not
+  // unlock ballots — it unlocks the contribution gates further down.
   const isVotingOpen = propsIsVotingOpen !== undefined
     ? propsIsVotingOpen
     : Boolean(
         (sessionState.activeRound && sessionState.activeRound.status === 'open') ||
-        sessionState.activePhase === 'free_roam' ||
         !readOnly
       );
 
@@ -180,6 +179,25 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
   const cardBorderClass = !isVotingOpen ? 'border-orange-200/80' : 'border-stone-200';
 
   const phase = sessionState.activePhase;
+
+  // ---- Round results ----------------------------------------------------
+  // Between "Close & Reveal" and "Back to Room" the round is still the ACTIVE
+  // round, with status 'revealed' and its tally attached. That is the reveal
+  // moment for the whole room, so it feeds the same card that later shows the
+  // archived round — just louder while it is live.
+  const revealedRound =
+    sessionState.activeRound && sessionState.activeRound.status === 'revealed'
+      ? sessionState.activeRound
+      : null;
+  const resultsRound = revealedRound || lastRound;
+  const isLiveReveal = Boolean(revealedRound);
+  const myResultPicks =
+    resultsRound && myRoundBallot?.roundId === resultsRound.id
+      ? (myRoundBallot.selections || [])
+      : [];
+  const myResultLabels = (resultsRound?.results || [])
+    .filter(r => myResultPicks.includes(r.optionId))
+    .map(r => r.label);
 
   // Contribution: open in the phase that calls for it, plus free roam.
   const canSubmitProblem = !readOnly || phase === 'problem_pitch' || phase === 'voting' || phase === 'free_roam';
@@ -215,12 +233,12 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
     });
   };
 
+  // onVoteProblem already merges the tap into this device's round ballot when a
+  // round is open. Posting [id] here as well would overwrite that merge with a
+  // single selection, so the tap goes through one path only.
   const guardedVoteProblem = (id: string, commit: boolean, name?: string) => {
     if (votingLocked) return blockedByRound();
     onVoteProblem(id, commit, name);
-    if (sessionState.activeRound && sessionState.activeRound.status === 'open' && onSubmitBallot) {
-      onSubmitBallot([id]);
-    }
   };
 
   // Squad commit/leave has its own gate. Kept separate from guardedVoteProblem
@@ -465,40 +483,71 @@ export const AudienceParticipationView: React.FC<AudienceParticipationViewProps>
           </div>
         )}
 
-        {/* Last round result — the catch-up card. A phone that was locked or
-            offline through the reveal lands here with no idea a round ran, so
-            the result stays on the idle screen after the takeover clears.
-            Deliberately quiet: it is a record, not a call to action. */}
-        {lastRound && (
-          <div className="p-3 rounded-2xl bg-white border border-stone-300 shadow-xs">
+        {/* Round result — one card, two moods. While the host holds the reveal
+            this is the live result and gets the room's attention; once the
+            round is archived the same card stays on as the quiet catch-up for
+            a phone that was locked through the whole reveal window. */}
+        {resultsRound && (
+          <div
+            className={`p-3 rounded-2xl bg-white shadow-xs ${
+              isLiveReveal
+                ? 'border-2 border-amber-400 shadow-md animate-in fade-in slide-in-from-top-2 duration-300'
+                : 'border border-stone-300'
+            }`}
+          >
             <div className="flex items-center justify-between gap-2 mb-1.5">
               <div className="flex items-center gap-1.5 text-[10px] font-mono font-bold uppercase tracking-wider text-amber-700">
                 <Award className="w-3.5 h-3.5" />
-                Last round result
+                {isLiveReveal ? 'Results are in' : 'Last round result'}
               </div>
               <span className="text-[10px] font-mono text-stone-400 shrink-0">
-                {lastRound.ballotsCast} ballot{lastRound.ballotsCast === 1 ? '' : 's'}
+                {resultsRound.ballotsCast} ballot{resultsRound.ballotsCast === 1 ? '' : 's'}
               </span>
             </div>
 
-            <div className="text-sm font-display font-black text-stone-900 leading-snug">
-              {lastRound.title}
+            <div
+              className={`font-display font-black text-stone-900 leading-snug ${
+                isLiveReveal ? 'text-base' : 'text-sm'
+              }`}
+            >
+              {resultsRound.title}
             </div>
 
             <div className="mt-2 space-y-1">
-              {(lastRound.results || []).slice(0, 3).map((r, i) => (
-                <div key={r.optionId} className="flex items-center gap-2 text-xs">
-                  <span className="w-4 shrink-0 font-mono text-stone-400">{i + 1}</span>
-                  <span className="flex-1 truncate text-stone-700 font-semibold">{r.label}</span>
-                  <span className="font-mono font-bold text-stone-900 shrink-0">
-                    {r.votes} vote{r.votes === 1 ? '' : 's'}
-                  </span>
-                </div>
-              ))}
-              {!(lastRound.results || []).length && (
+              {(resultsRound.results || []).slice(0, isLiveReveal ? 5 : 3).map((r, i) => {
+                const mine = myResultPicks.includes(r.optionId);
+                return (
+                  <div
+                    key={r.optionId}
+                    className={`flex items-center gap-2 text-xs rounded-lg ${
+                      mine ? 'bg-emerald-50 px-1.5 py-1' : ''
+                    }`}
+                  >
+                    <span className="w-4 shrink-0 font-mono text-stone-400">{i + 1}</span>
+                    <span className="flex-1 truncate text-stone-700 font-semibold">{r.label}</span>
+                    {mine && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                    <span className="font-mono font-bold text-stone-900 shrink-0">
+                      {r.votes} vote{r.votes === 1 ? '' : 's'}
+                      {isLiveReveal && (
+                        <span className="text-stone-400"> · {Math.round(r.share * 100)}%</span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+              {!(resultsRound.results || []).length && (
                 <div className="text-xs text-stone-500">No ballots were cast in that round.</div>
               )}
             </div>
+
+            {myResultLabels.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-stone-200 text-[11px] text-emerald-800 font-semibold flex items-start gap-1.5">
+                <Check className="w-3.5 h-3.5 shrink-0 mt-px" />
+                <span className="truncate">
+                  Your pick{myResultLabels.length === 1 ? '' : 's'}: {myResultLabels.join(', ')}
+                </span>
+              </div>
+            )}
           </div>
         )}
 

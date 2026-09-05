@@ -15,7 +15,6 @@ import { VotingParticleProvider } from './components/VotingParticleManager';
 import { RoomLiveAnalyticsModal } from './components/RoomLiveAnalyticsModal';
 import { AudienceParticipationView } from './components/AudienceParticipationView';
 import { StageConductorBar } from './components/StageConductorBar';
-import { RoundTakeover } from './components/RoundTakeover';
 import { captureHostKeyFromUrl, hostFetch, verifyHostKey } from './utils/hostKey';
 
 export default function App() {
@@ -777,20 +776,47 @@ export default function App() {
       if (data?.myVotes) applyMyVotes(data.myVotes);
       if (data?.problems && Array.isArray(data.problems)) setProblems(data.problems);
 
-      // If a live voting round is open, also sync with round ballot
+      // If a live voting round is open, also sync with round ballot.
+      // An upvote ADDS to the ballot; it must never quietly wipe the picks the
+      // voter already made on a multi-select round.
       if (roomSessionState.activeRound && roomSessionState.activeRound.status === 'open') {
         const roundId = roomSessionState.activeRound.id;
-        const selections = retract
-          ? (myRoundBallot.selections || []).filter(s => s !== id)
-          : [id];
-        postRound(
-          '/api/round/vote',
-          'POST',
-          { roundId, selections, voterName: collaboratorName }
-        ).then(roundData => {
-          if (roundData?.round) applyRound(roundData.round);
-          if (roundData?.myBallot) setMyRoundBallot(roundData.myBallot);
-        }).catch(err => console.error('Round vote sync failed:', err));
+        const maxSelections = Math.max(1, roomSessionState.activeRound.maxSelections || 1);
+        const current = myRoundBallot.roundId === roundId ? (myRoundBallot.selections || []) : [];
+
+        let selections: string[] | null;
+        if (retract) {
+          selections = current.filter(s => s !== id);
+        } else if (current.includes(id)) {
+          // Already on the ballot — nothing to send.
+          selections = null;
+        } else if (maxSelections === 1 || !current.length) {
+          // Single-choice round: the new pick replaces the old one.
+          selections = [id];
+        } else if (current.length >= maxSelections) {
+          // At the cap. Dropping one of their existing picks behind their back
+          // would be worse than doing nothing, so say so instead.
+          selections = null;
+          addToast({
+            type: 'info',
+            title: 'All your picks are used',
+            message: `This round allows ${maxSelections} pick${maxSelections === 1 ? '' : 's'}. Withdraw one before adding another.`,
+            duration: 4000
+          });
+        } else {
+          selections = [...current, id];
+        }
+
+        if (selections) {
+          postRound(
+            '/api/round/vote',
+            'POST',
+            { roundId, selections, voterName: collaboratorName }
+          ).then(roundData => {
+            if (roundData?.round) applyRound(roundData.round);
+            if (roundData?.myBallot) setMyRoundBallot(roundData.myBallot);
+          }).catch(err => console.error('Round vote sync failed:', err));
+        }
       }
 
       if (res.status === 409) {
@@ -1071,9 +1097,12 @@ export default function App() {
   const totalVotesCount = problems.reduce((sum, p) => sum + p.upvotes, 0);
   const totalSquadsCount = problems.reduce((sum, p) => sum + p.commitments, 0);
 
+  // Voting is host-driven: it happens inside a round the host has opened, and
+  // nowhere else. Free roam still allows the things it legitimately allows
+  // (pitching a problem, joining a squad, nominating a trustee) — those run off
+  // the per-phase capability gates in AudienceParticipationView, not off this.
   const isVotingOpen = Boolean(
-    (roomSessionState.activeRound && roomSessionState.activeRound.status === 'open') ||
-    roomSessionState.activePhase === 'free_roam'
+    roomSessionState.activeRound && roomSessionState.activeRound.status === 'open'
   );
 
   return (
