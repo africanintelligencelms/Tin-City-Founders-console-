@@ -6,15 +6,25 @@
 |---|---|
 | Website | https://console.tincityfounders.com |
 | VPS IPv4 | 194.164.76.213 |
-| Repository directory | `/apps/tincity` |
+| Repository directory | `/root/apps/tincity` |
 | PM2 application | `tincity` |
-| PM2 working directory | `/apps/tincity` |
-| Entry point | `/apps/tincity/dist/server.cjs` |
+| PM2 working directory | `/root/apps/tincity` |
+| Entry point | `/root/apps/tincity/dist/server.cjs` |
 | Repository | `africanintelligencelms/Tin-City-Founders-console-` |
 
-These paths match the production PM2 output supplied on September 9, 2026.
-`~/apps` means `/root/apps` when logged in as root; it is a different directory.
-The earlier `/srv/tcf/app` deployment layout is obsolete.
+These paths match the production PM2 output after the September 9, 2026 move.
+`~/apps/tincity` resolves to `/root/apps/tincity` when logged in as root.
+The former `/apps/tincity` and `/srv/tcf/app` locations are obsolete.
+
+The move was verified with an HTTPS 200 response and an unauthenticated host
+check returning `{"success":true,"ok":false}`. `pm2 save` was run after the move.
+PM2's `exec cwd` and script path are authoritative; an inherited `PWD` variable
+may still show the old path without changing the process's working directory.
+
+Migration backups are in `/root/tincity-migration-backups`, including the
+pre-move app archive, final data archive, and saved PM2 configuration. Keep
+these private: they can contain phone numbers and application secrets. The
+routine deployment helper below uses `/root/tincity-backups` separately.
 
 The VPS hosts multiple applications, some using different GitHub accounts.
 Run the commands below as the existing deployment user in the same environment
@@ -38,7 +48,7 @@ that manages the `tincity` process. The supplied PM2 listing uses root.
 ## Inspect before updating
 
 ```bash
-cd /apps/tincity
+cd /root/apps/tincity
 pwd
 git status --short
 git remote get-url origin
@@ -54,9 +64,9 @@ The server saves state in `.data/room_state.json`, relative to the PM2 working
 directory. Preserve the existing directory or symlink exactly as it is:
 
 ```bash
-ls -ld /apps/tincity/.data
-readlink -f /apps/tincity/.data
-test -s /apps/tincity/.data/room_state.json
+ls -ld /root/apps/tincity/.data
+readlink -f /root/apps/tincity/.data
+test -s /root/apps/tincity/.data/room_state.json
 ```
 
 Do not create a replacement empty data directory if this check fails. Establish
@@ -71,15 +81,16 @@ Merge the intended PR on GitHub first. The script below updates only this
 checkout from its existing `origin/main`, using its existing authentication.
 It does not merge PRs or change GitHub accounts.
 
-Save the following as `/apps/tincity-deploy.sh` if you want a repeatable helper.
-Read it before running it. This replaces the old broken `sudo`/comment command.
+Save the following as `/root/tincity-deploy.sh` if you want a repeatable helper.
+Read it before running it. Replace any earlier helper that still targets the
+former app directory; do not run that old helper after the move.
 The backup directory is dedicated to Tin City and outside its checkout.
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-APP=/apps/tincity
-BACKUPS=/apps/tincity-backups
+APP=/root/apps/tincity
+BACKUPS=/root/tincity-backups
 cd "$APP"
 
 [ "$(git rev-parse --show-toplevel)" = "$APP" ] || { echo 'Wrong repository directory'; exit 1; }
@@ -98,9 +109,9 @@ process.stdin.on("data", chunk => input += chunk);
 process.stdin.on("end", () => {
   const matches = JSON.parse(input).filter(p => p.name === "tincity");
   const env = matches[0]?.pm2_env;
-  if (matches.length !== 1 || env.pm_cwd !== "/apps/tincity" ||
-      env.pm_exec_path !== "/apps/tincity/dist/server.cjs" || env.status !== "online") {
-    console.error("Expected one online tincity process at /apps/tincity; inspect PM2 first");
+  if (matches.length !== 1 || env.pm_cwd !== "/root/apps/tincity" ||
+      env.pm_exec_path !== "/root/apps/tincity/dist/server.cjs" || env.status !== "online") {
+    console.error("Expected one online tincity process at /root/apps/tincity; inspect PM2 first");
     process.exit(1);
   }
 });'
@@ -153,10 +164,10 @@ failure after restart needs inspection; it does not automatically roll back.
 
 Do not delete `package-lock.json` or change the global Node/npm installation.
 Inspect the error first. For a confirmed missing optional native dependency, a
-scoped recovery attempt from `/apps/tincity` is:
+scoped recovery attempt from `/root/apps/tincity` is:
 
 ```bash
-cd /apps/tincity
+cd /root/apps/tincity
 npm install --include=dev --package-lock=false
 npm run lint
 npm run build
@@ -172,7 +183,7 @@ exhaustion.
 
 If a build fails before restart, the application remains stopped. Read the saved
 `commit-<timestamp>.txt`, inspect the checkout, and restore that exact commit in
-`/apps/tincity` using `git switch --detach <saved-commit>`. Then run `npm ci
+`/root/apps/tincity` using `git switch --detach <saved-commit>`. Then run `npm ci
 --include=dev`, `npm run build`, and `pm2 restart tincity`. Substitute the actual
 saved commit; do not paste angle-bracket placeholders literally. This leaves a
 detached checkout that must be reconciled with `main` before the next deployment.
@@ -209,7 +220,12 @@ before a reload. Do not replace the global nginx config or another site's block.
 printing and confirm it reaches `console.tincityfounders.com`.
 
 The host opens the site with their existing host key once per browser. The app
-stores it locally and removes it from the URL. Preserve the deployed key and its
+stores it locally and removes it from the URL. The local
+`/root/apps/tincity/ecosystem.config.cjs` now contains the running environment
+preserved during migration. Keep it untracked, private (mode 600), and out of
+Git commits and shared output. Preserve it during pulls and builds.
+
+Preserve the deployed key and its
 existing environment source during routine updates; do not rotate it or introduce
 a second secrets file. Never commit keys to this repository.
 
