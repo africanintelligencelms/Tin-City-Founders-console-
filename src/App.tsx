@@ -347,11 +347,15 @@ export default function App() {
       if (savedProfile) {
         const parsed = JSON.parse(savedProfile);
         setCurrentProfile(parsed);
-        // Ensure server also registers this attendee in case of a fresh server session
-        fetch('/api/attendees', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(parsed)
+        fetch('/api/profile/me').then(r => r.json()).then(async data => {
+          if (data.attendee) {
+            setCurrentProfile(data.attendee);
+            localStorage.setItem('tcf_my_profile', JSON.stringify(data.attendee));
+          } else {
+            await fetch('/api/attendees', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(parsed)
+            });
+          }
         }).catch(() => {});
       } else {
         // First-time visitor walking in: prompt check-in modal
@@ -626,47 +630,16 @@ export default function App() {
 
   // Save profile handler
   const handleSaveProfile = async (profile: AttendeeProfile) => {
-    setCurrentProfile(profile);
-    try {
-      localStorage.setItem('tcf_my_profile', JSON.stringify(profile));
-      setIsFirstVisit(false);
-      addToast({
-        type: 'success',
-        title: 'Founder Checked In',
-        message: `${profile.name} is now checked in to the Tin City Founders room.`,
-        author: profile.name,
-        duration: 4000
-      });
-    } catch (e) {
-      console.error(e);
-    }
-
-    // Post to server
-    try {
-      const res = await fetch('/api/attendees', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(profile)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.attendees) {
-          setAttendees(data.attendees);
-          return;
-        }
-      }
-    } catch (err) {
-      console.error('Failed to sync attendee with server:', err);
-    }
-
-    // Fallback local state update
-    setAttendees(prev => {
-      const exists = prev.some(a => a.id === profile.id);
-      if (exists) {
-        return prev.map(a => a.id === profile.id ? profile : a);
-      }
-      return [profile, ...prev];
+    const res = await fetch('/api/attendees', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(profile)
     });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'Could not save your profile. Please try again.');
+    setCurrentProfile(data.attendee);
+    localStorage.setItem('tcf_my_profile', JSON.stringify(data.attendee));
+    setIsFirstVisit(false);
+    setAttendees(data.attendees);
+    addToast({ type: 'success', title: 'Profile saved', message: 'Your details have been saved.', duration: 4000 });
   };
 
   // Save user vote tracking to local storage
@@ -1152,6 +1125,7 @@ export default function App() {
 
           {/* Optional audience profile sheet (Give/Ask, role, skills, area, bio) */}
           <AudienceProfileSheet
+            onRecoverProfile={() => { setIsProfileSheetOpen(false); setIsCheckInModalOpen(true); }}
             isOpen={isProfileSheetOpen}
             currentProfile={currentProfile}
             onClose={() => setIsProfileSheetOpen(false)}
@@ -1174,7 +1148,7 @@ export default function App() {
             votedCount={userVotedIds.length}
             attendeeCount={attendees.length}
             currentProfile={currentProfile}
-            onOpenProfile={() => setIsCheckInModalOpen(true)}
+            onOpenProfile={() => currentProfile ? setIsProfileSheetOpen(true) : setIsCheckInModalOpen(true)}
             onOpenAnalytics={() => setIsAnalyticsModalOpen(true)}
             onSwitchToAudienceView={() => handleToggleAudienceMode(true)}
             syncStatus={syncStatus}
@@ -1273,6 +1247,14 @@ export default function App() {
             currentProfile={currentProfile}
             onSaveProfile={handleSaveProfile}
             isFirstCheckIn={isFirstVisit}
+          />
+
+          <AudienceProfileSheet
+            onRecoverProfile={() => { setIsProfileSheetOpen(false); setIsCheckInModalOpen(true); }}
+            isOpen={isProfileSheetOpen}
+            currentProfile={currentProfile}
+            onClose={() => setIsProfileSheetOpen(false)}
+            onSaveProfile={handleSaveProfile}
           />
 
           {/* Deep Room Live Analytics & Collective Visualization Modal */}

@@ -6,7 +6,7 @@ interface FounderCheckInModalProps {
   currentProfile: AttendeeProfile | null;
   isOpen: boolean;
   onClose: () => void;
-  onSaveProfile: (profile: AttendeeProfile) => void;
+  onSaveProfile: (profile: AttendeeProfile) => Promise<void>;
   isFirstCheckIn?: boolean;
 }
 
@@ -26,6 +26,9 @@ export const FounderCheckInModal: React.FC<FounderCheckInModalProps> = ({
   onSaveProfile,
   isFirstCheckIn = false
 }) => {
+  const [recovering, setRecovering] = useState(false);
+  const [phone, setPhone] = useState('');
+  const [busy, setBusy] = useState(false);
   const [name, setName] = useState<string>(currentProfile?.name || '');
   const [avatarColor, setAvatarColor] = useState<string>(currentProfile?.avatarColor || '#0D4734');
   const [showColorPicker, setShowColorPicker] = useState<boolean>(false);
@@ -37,13 +40,31 @@ export const FounderCheckInModal: React.FC<FounderCheckInModalProps> = ({
       setAvatarColor(currentProfile?.avatarColor || '#0D4734');
       setShowColorPicker(false);
       setError('');
+      setRecovering(false);
+      setPhone('');
     }
   }, [isOpen, currentProfile]);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (busy) return;
+    if (recovering) {
+      setBusy(true);
+      setError('');
+      try {
+        const res = await fetch('/api/profile/recover', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ whatsapp: phone }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not find your profile.');
+        localStorage.setItem('tcf_my_profile', JSON.stringify(data.attendee));
+        localStorage.removeItem('tcf_user_votes');
+        localStorage.removeItem('tcf_user_commits');
+        window.location.reload();
+      } catch (err) { setError(err instanceof Error ? err.message : 'Could not connect. Please try again.'); }
+      finally { setBusy(false); }
+      return;
+    }
     if (!name.trim()) {
       setError('Please enter your name to join the session.');
       return;
@@ -54,7 +75,8 @@ export const FounderCheckInModal: React.FC<FounderCheckInModalProps> = ({
     // sheet — and left genuinely blank if they never set it. Inventing a title,
     // a tag or a town here is what made every directory card read the same.
     const profile: AttendeeProfile = {
-      id: currentProfile?.id || `att-${Date.now()}`,
+      ...currentProfile,
+      id: currentProfile?.id || `att-${crypto.randomUUID()}`,
       name: name.trim(),
       title: currentProfile?.title || '',
       tags: currentProfile?.tags || [],
@@ -65,8 +87,10 @@ export const FounderCheckInModal: React.FC<FounderCheckInModalProps> = ({
       checkedInAt: currentProfile?.checkedInAt || new Date().toISOString()
     };
 
-    onSaveProfile(profile);
-    onClose();
+    setBusy(true);
+    try { await onSaveProfile(profile); onClose(); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not save. Please try again.'); }
+    finally { setBusy(false); }
   };
 
   const getInitials = (n: string) => {
@@ -97,7 +121,7 @@ export const FounderCheckInModal: React.FC<FounderCheckInModalProps> = ({
         {/* Heading */}
         <div className="mb-5">
           <h2 className="font-display font-black text-2xl text-[#09251B] tracking-tight">
-            {isFirstCheckIn ? 'Welcome to the Meetup' : 'Founder Profile'}
+            {recovering ? 'Welcome back' : isFirstCheckIn ? 'Welcome to Tin City Founders' : 'Founder Profile'}
           </h2>
         </div>
 
@@ -108,6 +132,13 @@ export const FounderCheckInModal: React.FC<FounderCheckInModalProps> = ({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {recovering ? (
+            <div className="space-y-3">
+              <label htmlFor="recover-phone" className="block text-sm font-bold">Your saved WhatsApp number</label>
+              <input id="recover-phone" type="tel" autoComplete="tel" required value={phone} onChange={e => setPhone(e.target.value)} placeholder="08012345678 or +2348012345678" className="w-full px-3 py-3 rounded-xl border-2 border-[#09251B]" />
+              <p className="text-xs text-stone-600">Use the number you previously added in Your Profile. No verification code is required.</p>
+            </div>
+          ) : (<>
           {/* Name & Avatar Preview */}
           <div className="flex items-center gap-3">
             {/* Clickable Avatar to toggle color */}
@@ -158,16 +189,20 @@ export const FounderCheckInModal: React.FC<FounderCheckInModalProps> = ({
             </div>
           )}
 
+          </>)}
           {/* Action Buttons */}
           <div className="pt-2 space-y-2">
             <button
-              type="submit"
+              type="submit" disabled={busy}
               className="w-full bg-[#0D4734] hover:bg-[#125B43] text-white font-display font-black text-sm py-3.5 px-6 rounded-2xl border-2 border-[#09251B] shadow-[3px_3px_0px_0px_#09251B] flex items-center justify-center gap-2 cursor-pointer transition active:translate-y-0.5"
             >
-              <span>{isFirstCheckIn ? 'Join Live Session' : 'Save Profile'}</span>
+              <span>{busy ? 'Please wait…' : recovering ? 'Find my profile' : isFirstCheckIn ? 'Join Community' : 'Save Profile'}</span>
               <ArrowRight className="w-4 h-4 stroke-[3] text-amber-400" />
             </button>
 
+            <button type="button" disabled={busy} onClick={() => { setRecovering(!recovering); setError(''); }} className="w-full py-2 text-sm font-bold text-[#0D4734] underline">
+              {recovering ? 'Back to quick entry' : 'Already joined? Find your profile'}
+            </button>
             {isFirstCheckIn && (
               <button
                 type="button"

@@ -507,7 +507,7 @@ export const ProjectorStage: React.FC<ProjectorStageProps> = ({
     }
   };
 
-  const handleQuickCheckInFromQR = () => {
+  const handleQuickCheckInFromQR = async () => {
     if (!parsedFounderData) {
       if (onOpenCheckIn) onOpenCheckIn();
       return;
@@ -529,7 +529,11 @@ export const ProjectorStage: React.FC<ProjectorStageProps> = ({
     };
 
     if (onSaveProfile) {
-      onSaveProfile(newProfile);
+      try { await onSaveProfile(newProfile); }
+      catch (error) {
+        setCameraError(error instanceof Error ? error.message : 'Could not save your profile. Please try again.');
+        return;
+      }
     }
 
     if (onNavigateTab) {

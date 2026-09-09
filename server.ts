@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
+import { normalizePhone } from "./src/utils/phone";
 
 const app = express();
 // Port is configurable so the app can slot into a shared box that already
@@ -548,6 +549,7 @@ const emptyCategoriesStore = Object.fromEntries(
 
 let problems: ServerProblem[] = SEED_ROOM ? [...defaultProblems] : [];
 let attendees = SEED_ROOM ? [...defaultAttendees] : ([] as typeof defaultAttendees);
+let memberContacts: Record<string, { phone: string; voterId: string }> = {};
 let categoriesStore = SEED_ROOM ? { ...defaultCategoriesStore } : emptyCategoriesStore;
 let trusteeCandidates: ServerTrustee[] = SEED_ROOM ? [...defaultTrusteeCandidates] : [];
 
@@ -805,6 +807,7 @@ try {
     const raw = fs.readFileSync(STATE_FILE, "utf-8");
     const parsed = JSON.parse(raw);
     if (parsed.problems && Array.isArray(parsed.problems)) problems = parsed.problems;
+    if (parsed.memberContacts && typeof parsed.memberContacts === "object") memberContacts = parsed.memberContacts;
     if (parsed.attendees && Array.isArray(parsed.attendees)) attendees = parsed.attendees;
     if (parsed.categoriesStore && typeof parsed.categoriesStore === "object") categoriesStore = parsed.categoriesStore;
     if (parsed.trusteeCandidates && Array.isArray(parsed.trusteeCandidates)) trusteeCandidates = parsed.trusteeCandidates;
@@ -865,6 +868,7 @@ function buildStateSnapshot() {
     activeRound,
     roundBallots,
     roundHistory,
+    memberContacts,
     lastSaved: Date.now()
   };
 }
@@ -1636,16 +1640,47 @@ app.get("/api/attendees", (_req, res) => {
   res.json({ success: true, attendees });
 });
 
+// Trusted-community recovery: knowing the number is sufficient; no OTP is sent.
+app.post("/api/profile/recover", (req, res) => {
+  let phone: string;
+  try { phone = normalizePhone(String(req.body?.whatsapp ?? "")); }
+  catch (error) { return res.status(400).json({ error: (error as Error).message }); }
+  const match = Object.entries(memberContacts).find(([, contact]) => phone && contact.phone === phone);
+  const attendee = match && attendees.find(a => a.id === match[0]);
+  if (!match || !attendee) return res.status(404).json({ error: "No profile has this number saved yet. Use your original browser to add it in Your Profile, or join as a new member." });
+  const secure = req.secure || String(req.headers["x-forwarded-proto"]).toLowerCase() === "https";
+  res.removeHeader("Set-Cookie"); // Replace any guest cookie issued earlier in this request.
+  res.cookie(VOTER_COOKIE, match[1].voterId, { httpOnly: true, sameSite: "lax", secure, maxAge: 365 * 24 * 60 * 60 * 1000 });
+  res.json({ success: true, attendee: { ...attendee, whatsapp: phone } });
+});
+
+app.get("/api/profile/me", (req, res) => {
+  const match = Object.entries(memberContacts).find(([, contact]) => contact.voterId === req.voterId);
+  const attendee = match && attendees.find(a => a.id === match[0]);
+  res.json({ attendee: attendee ? { ...attendee, whatsapp: match![1].phone } : null });
+});
+
 // Check-in or update attendee profile
 app.post(["/api/attendees", "/api/attendees/checkin"], (req, res) => {
-  const { id, name, title, tags, bio, giveAsk, location, avatarColor } = req.body;
-  if (!name || !name.trim()) {
+  const { id, name, title, tags, bio, giveAsk, location, avatarColor, whatsapp } = req.body;
+  if (typeof name !== "string" || !name.trim()) {
     return res.status(400).json({ success: false, error: "Name is required for check-in" });
   }
 
   const attendeeId = id || `att-${Date.now()}`;
-  const existingIndex = attendees.findIndex(a => a.id === attendeeId || a.name.toLowerCase() === name.trim().toLowerCase());
+  const existingIndex = attendees.findIndex(a => a.id === attendeeId);
   const existing = existingIndex >= 0 ? attendees[existingIndex] : undefined;
+  const contact = memberContacts[attendeeId];
+  if (contact && contact.voterId !== req.voterId) return res.status(403).json({ error: "Use Already joined? to recover this profile first." });
+  let phone = contact?.phone || "";
+  if (whatsapp !== undefined) {
+    try { phone = normalizePhone(String(whatsapp)); }
+    catch (error) { return res.status(400).json({ error: (error as Error).message }); }
+  }
+  if (phone && Object.entries(memberContacts).some(([key, value]) => key !== attendeeId && value.phone === phone)) {
+    return res.status(409).json({ error: "That number already belongs to a profile. Use Already joined? to recover it." });
+  }
+
 
   // Blank stays blank. A field the client actually sent wins even when it is an
   // empty string (that is somebody clearing it); a field the client omitted
@@ -1676,8 +1711,9 @@ app.post(["/api/attendees", "/api/attendees/checkin"], (req, res) => {
     attendees.unshift(newAttendee);
   }
 
+  memberContacts[attendeeId] = { phone, voterId: req.voterId };
   broadcastStateUpdate("attendee_checkin", `${newAttendee.name} checked in to the meetup`, newAttendee.name);
-  res.json({ success: true, attendee: newAttendee, attendees });
+  res.json({ success: true, attendee: { ...newAttendee, whatsapp: phone }, attendees });
 });
 
 // Remove attendee
@@ -1685,6 +1721,7 @@ app.delete("/api/attendees/:id", requireHost, (req, res) => {
   const { id } = req.params;
   const removed = attendees.find(a => a.id === id);
   attendees = attendees.filter(a => a.id !== id);
+  delete memberContacts[id];
   if (removed) {
     broadcastStateUpdate("attendee_removed", `${removed.name} checked out`);
   }

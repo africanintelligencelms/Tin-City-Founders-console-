@@ -6,6 +6,7 @@ export interface AttendeeProfile {
   bio?: string;
   giveAsk?: string;
   location?: string;
+  whatsapp?: string;
   avatarColor?: string;
   checkedInAt?: string;
 }

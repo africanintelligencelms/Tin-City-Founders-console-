@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, MapPin, Handshake, Check } from 'lucide-react';
+import { normalizePhone } from '../utils/phone';
 import { AttendeeProfile } from '../types';
 import { POPULAR_SKILLS, JOS_LOCATIONS } from '../data/profileTags';
 
@@ -7,7 +8,8 @@ interface AudienceProfileSheetProps {
   isOpen: boolean;
   currentProfile: AttendeeProfile | null;
   onClose: () => void;
-  onSaveProfile: (profile: AttendeeProfile) => void;
+  onRecoverProfile: () => void;
+  onSaveProfile: (profile: AttendeeProfile) => Promise<void>;
 }
 
 /**
@@ -26,8 +28,12 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
   isOpen,
   currentProfile,
   onClose,
+  onRecoverProfile,
   onSaveProfile
 }) => {
+  const [whatsapp, setWhatsapp] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
   const [giveAsk, setGiveAsk] = useState('');
   const [title, setTitle] = useState('');
   const [tags, setTags] = useState<string[]>([]);
@@ -38,6 +44,8 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
   // draft that was abandoned last time never resurfaces as if it were saved.
   useEffect(() => {
     if (!isOpen) return;
+    setWhatsapp(currentProfile?.whatsapp || '');
+    setError('');
     setGiveAsk(currentProfile?.giveAsk || '');
     setTitle(currentProfile?.title || '');
     setTags(currentProfile?.tags ? [...currentProfile.tags] : []);
@@ -65,12 +73,16 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
     setLocation(prev => (prev === loc ? '' : loc));
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     // Blank stays blank. A trimmed-empty field is saved as empty, never
     // backfilled with a plausible-sounding default.
-    onSaveProfile({
+    setError('');
+    setSaving(true);
+    try {
+    await onSaveProfile({
       ...currentProfile,
+      whatsapp: normalizePhone(whatsapp),
       title: title.trim(),
       tags: tags.map(t => t.trim()).filter(Boolean),
       giveAsk: giveAsk.trim(),
@@ -78,6 +90,8 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
       bio: bio.trim()
     });
     onClose();
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not save. Please try again.'); }
+    finally { setSaving(false); }
   };
 
   return (
@@ -120,6 +134,13 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
               </div>
             </div>
 
+            <section className="space-y-2 bg-white p-4 rounded-2xl border border-stone-300">
+              <label htmlFor="profile-whatsapp" className="block text-sm font-bold">WhatsApp number (optional)</label>
+              <p id="phone-help" className="text-xs text-stone-600">Add your WhatsApp number to access your profile on another device. It won't appear in the public directory.</p>
+              <input id="profile-whatsapp" type="tel" autoComplete="tel" aria-describedby="phone-help" value={whatsapp} onChange={e => setWhatsapp(e.target.value)} placeholder="08012345678 or +2348012345678" className="w-full px-3 py-3 rounded-xl border border-stone-300" />
+              <button type="button" onClick={onRecoverProfile} className="text-xs font-bold text-[#0D4734] underline">Already have another profile? Find it</button>
+              <p className="text-xs text-stone-500">Use this number with “Already joined?” next time. No verification code is required.</p>
+            </section>
             {/* GIVE & ASK — the one field worth a stranger's attention at a mixer. */}
             <section className="bg-white rounded-2xl border-2 border-[#0D4734] shadow-[3px_3px_0px_0px_#09251B] p-4 space-y-2">
               <label htmlFor="profile-give-ask" className="flex items-center gap-2 text-[#0D4734]">
@@ -269,6 +290,7 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
 
         {/* Sticky footer. Skipping is as easy as saving, and looks it. */}
         <div className="shrink-0 border-t border-stone-300 bg-[#FAF6EE] px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          {error && <p role="alert" className="max-w-xl mx-auto mb-3 text-sm text-red-700">{error}</p>}
           <div className="max-w-xl mx-auto w-full flex items-center gap-3">
             <button
               type="button"
@@ -278,10 +300,10 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
               Skip
             </button>
             <button
-              type="submit"
+              type="submit" disabled={saving}
               className="flex-1 py-3 rounded-xl bg-[#0D4734] hover:bg-[#166E52] text-white text-sm font-display font-black border-2 border-[#09251B] shadow-[3px_3px_0px_0px_#09251B] cursor-pointer active:translate-y-0.5 transition"
             >
-              Save Profile
+              {saving ? 'Saving…' : 'Save Profile'}
             </button>
           </div>
         </div>
