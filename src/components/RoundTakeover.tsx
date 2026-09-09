@@ -3,6 +3,7 @@ import { Vote, CheckCircle2, Trophy, Radio, Loader2, Users, AlertCircle, Refresh
 import { VotingRound, MyRoundBallot } from '../types';
 
 interface RoundTakeoverProps {
+  embedded?: boolean;
   round: VotingRound;
   myBallot: MyRoundBallot;
   onSubmitBallot: (selections: string[]) => Promise<void> | void;
@@ -20,6 +21,7 @@ const KIND_LABEL: Record<VotingRound['kind'], string> = {
 };
 
 export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
+  embedded = false,
   round,
   myBallot,
   onSubmitBallot,
@@ -104,7 +106,7 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
   // ---------------- Results reveal ----------------
   if (round.status === 'revealed') {
     return (
-      <div className="min-h-screen bg-[#071912] text-[#FAF6EE] px-4 py-6">
+      <div className={`${embedded ? 'rounded-3xl' : 'min-h-screen'} bg-[#071912] text-[#FAF6EE] px-4 py-6`}>
         <div className="max-w-lg mx-auto">
           <div className="flex items-center justify-between gap-2 mb-2">
             <div className="flex items-center gap-2 text-amber-300 text-xs font-mono font-bold uppercase tracking-wider">
@@ -172,7 +174,7 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
   const alreadyVoted = myBallot.roundId === round.id && myBallot.hasVoted;
 
   return (
-    <div className="min-h-screen bg-[#071912] text-[#FAF6EE] px-4 py-6 pb-32">
+    <div className={`${embedded ? 'rounded-3xl' : 'min-h-screen pb-32'} bg-[#071912] text-[#FAF6EE] px-4 py-6`}>
       <div className="max-w-lg mx-auto">
         <div className="flex items-center justify-between gap-2 mb-2">
           <div className="flex items-center gap-2 text-emerald-300 text-xs font-mono font-bold uppercase tracking-wider">
@@ -251,7 +253,7 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
       </div>
 
       {/* Sticky submit bar */}
-      <div className="fixed bottom-0 inset-x-0 bg-[#071912]/95 backdrop-blur border-t border-white/10 px-4 py-3">
+      <div className={`${embedded ? 'mt-6 rounded-xl' : 'fixed bottom-0 inset-x-0'} bg-[#071912]/95 backdrop-blur border-t border-white/10 px-4 py-3`}>
         <div className="max-w-lg mx-auto">
           <button
             type="button"

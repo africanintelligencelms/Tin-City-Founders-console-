@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { NavigationTab, PlateauProblem, AttendeeProfile, ToastNotification, RoomSessionState } from './types';
 import type { TrusteeCandidate, CategoryInfo, MyVotes, MyRoundBallot, RoundKind, VotingRound } from './types';
+import { CommunityView } from './components/CommunityView';
 import { Header } from './components/Header';
 import { ProblemVoting } from './components/ProblemVoting';
 import { AttendeeDirectory } from './components/AttendeeDirectory';
@@ -47,18 +48,33 @@ export default function App() {
   const [isAudienceMode, setIsAudienceMode] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     const params = new URLSearchParams(window.location.search);
-    return params.get('mode') === 'audience' || params.has('join') || window.location.pathname === '/join';
+    return ['audience', 'community', 'mixer'].includes(params.get('mode') || '') || params.has('join') || window.location.pathname === '/join';
   });
 
   // Pull ?host=<key> out of the URL on the very first render (before anything is
   // painted on a projector) and stash it. Audience phones never carry one.
   useState<string>(() => captureHostKeyFromUrl());
 
-  // Server's verdict on this device's host key. Optimistic until /api/host/verify
-  // answers, then authoritative: a false locks the app into audience mode no
-  // matter what the URL says, so dropping ?mode=audience no longer reveals the
-  // console. The server enforces the same key on every host route regardless.
-  const [isHostVerified, setIsHostVerified] = useState<boolean>(true);
+  // Verify host access before showing management controls. Public visitors start
+  // on the community website; mixer mode is an explicit secondary experience.
+  const [isHostVerified, setIsHostVerified] = useState<boolean>(false);
+  const [isMixerMode, setIsMixerMode] = useState(() => new URLSearchParams(window.location.search).get('mode') === 'mixer');
+  const selectParticipantMode = (mixer: boolean) => {
+    setIsAudienceMode(true);
+    setIsMixerMode(mixer);
+    const url = new URL(window.location.href);
+    url.searchParams.set('mode', mixer ? 'mixer' : 'community');
+    window.history.pushState({}, '', url);
+  };
+  useEffect(() => {
+    const updateMode = () => {
+      const params = new URLSearchParams(window.location.search);
+      setIsMixerMode(params.get('mode') === 'mixer');
+      setIsAudienceMode(['audience', 'community', 'mixer'].includes(params.get('mode') || '') || params.has('join') || window.location.pathname === '/join');
+    };
+    window.addEventListener('popstate', updateMode);
+    return () => window.removeEventListener('popstate', updateMode);
+  }, []);
   const audienceOnly = isAudienceMode || !isHostVerified;
 
   const [roomSessionState, setRoomSessionState] = useState<RoomSessionState>({
@@ -90,12 +106,15 @@ export default function App() {
     // Without a valid host key there is no way out of audience mode.
     if (!enableAudience && !isHostVerified) return;
     setIsAudienceMode(enableAudience);
+    setIsMixerMode(false);
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
       if (enableAudience) {
-        url.searchParams.set('mode', 'audience');
+        url.searchParams.set('mode', 'community');
       } else {
         url.searchParams.delete('mode');
+        url.searchParams.delete('join');
+        if (url.pathname === '/join') url.pathname = '/';
       }
       window.history.pushState({}, '', url.toString());
     }
@@ -1070,6 +1089,35 @@ export default function App() {
     setProblems(prev => prev.map(p => p.id === problemId ? { ...p, category: newCategory } : p));
   };
 
+  // Community actions record ongoing support without altering a formal round ballot.
+  const communityRequest = async (url: string, method: 'POST' | 'DELETE', body?: unknown) => {
+    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.message || data.error || 'Could not save. Please try again.');
+    if (data.problems) setProblems(data.problems);
+    if (data.myVotes) applyMyVotes(data.myVotes);
+    if (data.trusteeCandidates) setTrusteeCandidates(data.trusteeCandidates);
+    if (data.categories) setLiveCategories(data.categories);
+    return data;
+  };
+  const handleCommunityVote = async (id: string, commit: boolean, name?: string) => {
+    const selected = (commit ? myVotes.squads : myVotes.problems).includes(id);
+    await communityRequest(`/api/problems/${encodeURIComponent(id)}/${commit ? 'join-squad' : 'vote'}`, selected ? 'DELETE' : 'POST', { name: name || currentProfile?.name });
+  };
+  const handleCommunityCategory = async (name: string) => {
+    await communityRequest(`/api/categories/${encodeURIComponent(name)}/vote`, myVotes.categories.includes(name) ? 'DELETE' : 'POST');
+  };
+  const handleCommunityTrustee = async (id: string) => {
+    await communityRequest(`/api/trustees/${encodeURIComponent(id)}/vote`, myVotes.trustees.includes(id) ? 'DELETE' : 'POST');
+  };
+  const handleCommunitySubmit: React.ComponentProps<typeof CommunityView>['onSubmit'] = async data => {
+    await communityRequest('/api/problems', 'POST', { ...data, submittedBy: currentProfile?.name || data.submittedBy });
+    addToast({ type: 'success', title: 'Challenge shared', message: 'Your challenge is now on the community board.', duration: 3500 });
+  };
+  const handleCommunityComment = async (id: string, author: string, text: string) => {
+    await communityRequest(`/api/problems/${encodeURIComponent(id)}/comments`, 'POST', { author, text });
+  };
+
   // Total voted count for badge
   const totalVotesCount = problems.reduce((sum, p) => sum + p.upvotes, 0);
   const totalSquadsCount = problems.reduce((sum, p) => sum + p.commitments, 0);
@@ -1086,6 +1134,23 @@ export default function App() {
     <VotingParticleProvider>
       {audienceOnly ? (
         <div className={`min-h-screen ${!isVotingOpen ? 'bg-[#FFF0E6]' : 'bg-[#FAF6EE]'} text-stone-900 transition-colors duration-300`}>
+          {!isMixerMode ? (
+            <CommunityView
+              problems={problems} attendees={attendees} categories={liveCategories}
+              trustees={trusteeCandidates} profile={currentProfile} myVotes={myVotes}
+              round={roomSessionState.activeRound || null} lastRound={lastRound} ballot={myRoundBallot}
+              onVote={handleCommunityVote} onVoteCategory={handleCommunityCategory} onVoteTrustee={handleCommunityTrustee}
+              onSubmit={handleCommunitySubmit} onComment={handleCommunityComment} onBallot={handleSubmitBallot}
+              onProfile={() => setIsProfileSheetOpen(true)} onJoin={() => setIsCheckInModalOpen(true)}
+              onMixer={() => selectParticipantMode(true)}
+              onHost={isHostVerified ? () => handleToggleAudienceMode(false) : undefined}
+              syncStatus={syncStatus} onReconnect={handleManualReconnect}
+            />
+          ) : (<>
+          <div className="bg-[#0D4734] text-white px-4 py-3 flex items-center justify-between">
+            <span className="text-sm font-bold">Live mixer</span>
+            <button className="text-sm font-bold underline" onClick={() => selectParticipantMode(false)}>Back to community</button>
+          </div>
           <AudienceParticipationView
             readOnly={!isVotingOpen}
             isVotingOpen={isVotingOpen}
@@ -1113,6 +1178,8 @@ export default function App() {
             onReconnect={handleManualReconnect}
             onNotify={addToast}
           />
+
+          </>)}
 
           {/* Profile / Check-in Modal */}
           <FounderCheckInModal

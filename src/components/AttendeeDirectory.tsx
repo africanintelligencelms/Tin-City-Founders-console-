@@ -4,6 +4,7 @@ import { Users, Search, MapPin, Lightbulb, Sparkles, UserPlus, CheckCircle } fro
 import { BrandLogo } from './BrandLogo';
 
 interface AttendeeDirectoryProps {
+  community?: boolean;
   attendees: AttendeeProfile[];
   currentProfile: AttendeeProfile | null;
   onOpenCheckIn: () => void;
@@ -11,6 +12,7 @@ interface AttendeeDirectoryProps {
 }
 
 export const AttendeeDirectory: React.FC<AttendeeDirectoryProps> = ({
+  community = false,
   attendees,
   currentProfile,
   onOpenCheckIn,
@@ -64,10 +66,10 @@ export const AttendeeDirectory: React.FC<AttendeeDirectoryProps> = ({
         <div>
           <div className="inline-flex items-center gap-1.5 bg-[#E5A93C] text-[#09251B] border-2 border-[#09251B] px-3 py-1 rounded-full text-xs font-display font-black tracking-wider uppercase mb-2 shadow-[2px_2px_0px_0px_#09251B]">
             <Users className="w-3.5 h-3.5" />
-            <span>ROOM DIRECTORY · {attendees.length} FOUNDERS CHECKED IN</span>
+            <span>{community ? 'COMMUNITY DIRECTORY' : 'ROOM DIRECTORY'} · {attendees.length} {community ? 'MEMBERS' : 'FOUNDERS CHECKED IN'}</span>
           </div>
           <h1 className="font-display font-black text-3xl sm:text-4xl text-[#09251B]">
-            WHO'S IN THE <span className="text-[#0D4734] underline decoration-[#E5A93C] decoration-8">ROOM TONIGHT</span>
+            {community ? 'MEET THE ' : "WHO'S IN THE "}<span className="text-[#0D4734] underline decoration-[#E5A93C] decoration-8">{community ? 'COMMUNITY' : 'ROOM TONIGHT'}</span>
           </h1>
           <p className="text-xs sm:text-sm text-[#09251B]/70 font-medium mt-1 max-w-xl">
             Discover fellow Plateau founders, engineers, and creatives. Filter by tags or search for specific Give & Asks to spark collaborations right now.
@@ -230,10 +232,10 @@ export const AttendeeDirectory: React.FC<AttendeeDirectoryProps> = ({
                 {/* Card Footer Actions */}
                 <div className="pt-3 border-t border-[#09251B]/15 flex items-center justify-between gap-3">
                   <span className="text-[10px] font-mono text-[#09251B]/60">
-                    Checked in {attendee.checkedInAt ? new Date(attendee.checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'recently'}
+                    {community ? 'Community member' : `Checked in ${attendee.checkedInAt ? new Date(attendee.checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'recently'}`}
                   </span>
 
-                  {!isMe && (
+                  {!isMe && !community && (
                     <button
                       onClick={() => handleSayHi(attendee)}
                       className={`text-xs font-display font-bold px-3.5 py-1.5 rounded-xl border transition-all duration-150 cursor-pointer flex items-center gap-1.5 active:scale-95 ${

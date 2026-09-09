@@ -141,6 +141,7 @@ export const SeamlessProblemWizard: React.FC<SeamlessProblemWizardProps> = ({
   const [customSkillInput, setCustomSkillInput] = useState<string>('');
   const [autoUpvote, setAutoUpvote] = useState<boolean>(true);
   const [autoCommit, setAutoCommit] = useState<boolean>(true);
+  const [submitError, setSubmitError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [hasLaunchedSuccess, setHasLaunchedSuccess] = useState<boolean>(false);
 
@@ -184,6 +185,7 @@ export const SeamlessProblemWizard: React.FC<SeamlessProblemWizardProps> = ({
       return;
     }
 
+    setSubmitError('');
     setIsSubmitting(true);
     try {
       const fullAuthorName = author.trim() 
@@ -210,7 +212,7 @@ export const SeamlessProblemWizard: React.FC<SeamlessProblemWizardProps> = ({
         setDescription('');
       }, 1400);
     } catch (err) {
-      console.error('Wizard submission error:', err);
+      setSubmitError(err instanceof Error ? err.message : 'Could not share your challenge. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -248,6 +250,7 @@ export const SeamlessProblemWizard: React.FC<SeamlessProblemWizardProps> = ({
           </button>
         </div>
 
+        {submitError && <p role="alert" className="px-6 py-3 text-sm text-red-700 bg-red-50">{submitError}</p>}
         {/* Step Progression Visualizer */}
         <div className="bg-[#EBF3EF] border-b-2 border-[#09251B]/15 px-6 py-2.5 flex items-center justify-between text-xs font-display font-black">
           {[

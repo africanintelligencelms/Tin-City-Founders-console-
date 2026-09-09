@@ -390,10 +390,10 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onSwitchToAudienceView}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-700/40 bg-emerald-900/10 hover:bg-emerald-900/20 text-[#0D4734] text-xs font-display font-bold transition cursor-pointer"
-            title="Preview Streamlined Audience Participation Mobile Remote"
+            title="Preview the member community website"
           >
             <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
-            <span className="hidden xl:inline">Audience Remote</span>
+            <span className="hidden xl:inline">Community view</span>
           </button>
         )}
 
