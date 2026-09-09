@@ -193,6 +193,14 @@ restore is required, stop only `tincity`, retain a copy of the current state, an
 restore a specifically selected backup to the existing resolved data location
 before restarting. Do not restore old data merely because a frontend build failed.
 
+A state file saved before the 9 September 2026 session-memory change has no
+`memberContacts` map, so every attendee row it carries is unowned. On an unowned
+row the check-in handler's ownership test is skipped, and the first request to
+post that attendee's `id` claims the profile and its voting identity — the ids
+are public in `GET /api/attendees`. After restoring any such backup, clear the
+attendee list with `DELETE /api/attendees/:id` and have people check in again.
+Rows created after that change carry their own owner and are not affected.
+
 Do not run `reset:room` or `seed:room` during a normal deployment: those commands
 replace community data. Do not reboot this shared VPS to test one app's update.
 
