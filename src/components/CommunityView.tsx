@@ -1,3 +1,4 @@
+import { PastBallots } from './PastBallots';
 import { SquadJoin, SquadRoster } from './SquadJoin';
 import React, { useEffect, useState } from 'react';
 import { Search, Plus, ThumbsUp, Users, ArrowRight, MessageSquare, X } from 'lucide-react';
@@ -35,12 +36,17 @@ interface Props {
 
 export function CommunityView(p: Props) {
   const [linkedRound, setLinkedRound] = useState(() => new URLSearchParams(window.location.search).get('round'));
-  const [view, setView] = useState<'problems' | 'members' | 'sectors' | 'trustees' | 'ballot'>(() => new URLSearchParams(window.location.search).has('round') ? 'ballot' : 'problems');
+  const [view, setView] = useState<'problems' | 'members' | 'sectors' | 'trustees' | 'ballot' | 'history'>(() => new URLSearchParams(window.location.search).has('round') ? 'ballot' : new URLSearchParams(window.location.search).get('view') === 'history' ? 'history' : 'problems');
   useEffect(() => {
-    const navigate = () => { const id = new URLSearchParams(window.location.search).get('round'); setLinkedRound(id); setView(id ? 'ballot' : 'problems'); };
+    const navigate = () => { const id = new URLSearchParams(window.location.search).get('round'); setLinkedRound(id); setView(id ? 'ballot' : new URLSearchParams(window.location.search).get('view') === 'history' ? 'history' : 'problems'); };
     window.addEventListener('popstate', navigate);
     return () => window.removeEventListener('popstate', navigate);
   }, []);
+  const openSection = (section: 'problems' | 'members' | 'sectors' | 'trustees' | 'history') => {
+    const url = new URL(window.location.href); url.searchParams.delete('round');
+    if (section === 'history') url.searchParams.set('view', 'history'); else url.searchParams.delete('view');
+    window.history.pushState({}, '', url); setLinkedRound(null); setView(section);
+  };
   const openBallot = (id: string) => {
     const url = new URL(window.location.href); url.searchParams.set('round', id); url.searchParams.set('mode', 'community');
     window.history.pushState({}, '', url); setLinkedRound(id); setView('ballot');
@@ -73,7 +79,7 @@ export function CommunityView(p: Props) {
   return <div className="min-h-screen bg-[#F6F3EC] text-[#09251B]">
     <header className="bg-white border-b-2 border-[#09251B] px-4 sm:px-8 py-4">
       <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
-        <button onClick={() => setView('problems')} aria-label="Community home"><BrandLogo variant="full" /></button>
+        <button onClick={() => openSection('problems')} aria-label="Community home"><BrandLogo variant="full" /></button>
         <div className="flex flex-wrap items-center gap-2">
           <button className="text-xs px-2 py-2" onClick={p.onReconnect}>{p.syncStatus === 'connected' ? '● Connected' : 'Reconnect'}</button>
           <button className={button} onClick={p.onMixer}>Mixer mode</button>
@@ -102,11 +108,12 @@ export function CommunityView(p: Props) {
       </section>}
 
       <nav aria-label="Community sections" className="flex flex-wrap gap-2 mb-6">
-        {([['problems', 'Challenges'], ['sectors', 'Sectors'], ['trustees', 'Trustees'], ['members', 'Member directory']] as const).map(([id, label]) => <button key={id} aria-current={view === id ? 'page' : undefined} onClick={() => setView(id)} className={`${button} ${view === id ? 'bg-[#0D4734] text-white hover:bg-[#166E52]' : 'bg-white'}`}>{label}</button>)}
+        {([['problems', 'Challenges'], ['sectors', 'Sectors'], ['trustees', 'Trustees'], ['members', 'Member directory'], ['history', 'Past ballots']] as const).map(([id, label]) => <button key={id} aria-current={view === id ? 'page' : undefined} onClick={() => openSection(id)} className={`${button} ${view === id ? 'bg-[#0D4734] text-white hover:bg-[#166E52]' : 'bg-white'}`}>{label}</button>)}
       </nav>
       {error && <p role="alert" className="text-red-700 mb-4">{error}</p>}
       {view === 'ballot' && (linkedRound || round?.id ? <CommunityBallot key={linkedRound || round!.id} roundId={linkedRound || round!.id} profile={p.profile} onJoin={p.onJoin} /> : <p>No ballot is available yet. You can still explore and support community challenges.</p>)}
 
+      {view === 'history' && <PastBallots onOpen={openBallot} />}
       {view === 'members' && <AttendeeDirectory community attendees={p.attendees} currentProfile={p.profile} onOpenCheckIn={p.profile ? p.onProfile : p.onJoin} />}
       {view === 'problems' && <>
         <div className="flex flex-wrap gap-3 mb-4">

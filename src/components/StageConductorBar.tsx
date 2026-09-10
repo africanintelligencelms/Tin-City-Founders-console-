@@ -535,6 +535,7 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
             </div>
 
             {/* ---------------- Voting Round Lifecycle ---------------- */}
+            <a href="/?mode=community&view=history" className="inline-block m-3 px-4 py-2 rounded-xl border border-emerald-600 text-white text-sm font-bold">Past ballots · results and squads</a>
             <WhatsAppBroadcastDeck rounds={[...(activeRound ? [activeRound] : []), ...roundHistory, ...(lastRound ? [lastRound] : [])].filter((r, i, all) => all.findIndex(x => x.id === r.id) === i)} />
             {activeRound?.endsAt && <div className="p-3 text-white"><RoundDeadline round={activeRound} />{activeRound.status === 'open' && onExtendRound && <button disabled={isRoundBusy} onClick={() => runRoundAction(onExtendRound)} className="mt-2 px-3 py-2 border border-emerald-500 rounded-xl text-xs">Extend deadline by 24 hours</button>}</div>}
             {(onOpenRound || onCloseRound) && (

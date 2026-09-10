@@ -45,6 +45,7 @@ try {
   let round=(await host('/api/round/open',{kind:'problem',durationHours:48,maxSelections:2})).round;
   const url=`/api/round?round=${encodeURIComponent(round.id)}`;
   assert.equal((await observer(url)).round.results,undefined);
+  assert(!(await observer('/api/round/history')).rounds.some(r=>r.id===round.id));
   await voter('/api/round/vote',{roundId:round.id,selections:[round.options[0].id,round.options[1].id]});
   const voted=await voter(url);
   assert.equal(voted.round.results[0].votes,1);
@@ -59,6 +60,9 @@ try {
   assert.equal((await voter(url)).round.results[0].votes,1);
   await observer('/api/round?round=missing',undefined,404);
   await host('/api/round/close',{});
+  const recent=(await observer('/api/round/history')).rounds;
+  assert.equal(recent[0].id,round.id);
+  assert.equal(recent[0].ballotsCast,2);
   const closed=await observer(url);
   assert.equal(closed.round.results.length,round.options.length);
   await host('/api/round/open',{kind:'category',durationHours:24});
@@ -71,6 +75,11 @@ try {
     await host('/api/round/open',{kind:'category',durationHours:24});
   }
   await stop(); await start();
+  const history=(await observer('/api/round/history')).rounds;
+  assert(history.length>20);
+  assert.equal(new Set(history.map(r=>r.id)).size,history.length);
+  assert(history.some(r=>r.id===round.id));
+  assert(history.every((r,i)=>i===0 || history[i-1].closedAt>=r.closedAt));
   assert.equal((await observer(url)).round.id,round.id);
   assert.equal((await observer(url)).round.results[0].votes,1);
   const response=await fetch(`http://127.0.0.1:${port}${url}`);

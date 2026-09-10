@@ -1233,6 +1233,20 @@ function ballotFor(roundId: string | null, voterId: string) {
   return { roundId, selections: b ? b.selections : [], hasVoted: !!b };
 }
 
+// Public history contains closed-round summaries only, never open ballot tallies.
+app.get('/api/round/history', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const closed = [...roundHistory, ...(activeRound?.status === 'revealed' ? [activeRound] : [])];
+  const rounds = closed.filter((r, i, all) => all.findIndex(other => other.id === r.id) === i)
+    .sort((a, b) => (b.closedAt || b.openedAt) - (a.closedAt || a.openedAt))
+    .map(r => ({ id: r.id, title: r.title, kind: r.kind, openedAt: r.openedAt,
+      closedAt: r.closedAt, ballotsCast: r.ballotsCast,
+      results: r.results || [],
+      squadMembersCount: r.options.reduce((count, option) => count + (option.squadMembers?.length || 0), 0)
+    }));
+  res.json({ success: true, rounds });
+});
+
 // Live breakdowns are computed for voters only, never stored in shared state/SSE.
 app.get("/api/round", (req, res) => {
   res.setHeader('Cache-Control', 'private, no-store');
