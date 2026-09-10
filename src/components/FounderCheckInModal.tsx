@@ -8,6 +8,7 @@ interface FounderCheckInModalProps {
   onClose: () => void;
   onSaveProfile: (profile: AttendeeProfile) => Promise<void>;
   isFirstCheckIn?: boolean;
+  initialRecovery?: boolean;
 }
 
 const AVATAR_COLORS = [
@@ -24,6 +25,7 @@ export const FounderCheckInModal: React.FC<FounderCheckInModalProps> = ({
   isOpen,
   onClose,
   onSaveProfile,
+  initialRecovery = false,
   isFirstCheckIn = false
 }) => {
   const [recovering, setRecovering] = useState(false);
@@ -40,10 +42,10 @@ export const FounderCheckInModal: React.FC<FounderCheckInModalProps> = ({
       setAvatarColor(currentProfile?.avatarColor || '#0D4734');
       setShowColorPicker(false);
       setError('');
-      setRecovering(false);
+      setRecovering(initialRecovery);
       setPhone('');
     }
-  }, [isOpen, currentProfile]);
+  }, [isOpen, currentProfile, initialRecovery]);
 
   if (!isOpen) return null;
 

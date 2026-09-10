@@ -32,6 +32,7 @@ export const AttendeeDirectory: React.FC<AttendeeDirectoryProps> = ({
     const matchesSearch = 
       attendee.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       attendee.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (attendee.organization || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       (attendee.bio && attendee.bio.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (attendee.giveAsk && attendee.giveAsk.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (attendee.location && attendee.location.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -184,6 +185,8 @@ export const AttendeeDirectory: React.FC<AttendeeDirectoryProps> = ({
                       <p className="text-xs font-bold text-[#0D4734] truncate">
                         {attendee.title}
                       </p>
+                      {attendee.organization && <p className="text-sm text-stone-600">{attendee.organization}</p>}
+                      {attendee.linkedin && /^https:\/\/(www\.)?linkedin\.com\/in\//i.test(attendee.linkedin) && <a href={attendee.linkedin} target="_blank" rel="noopener noreferrer" className="text-sm underline text-emerald-800">LinkedIn profile</a>}
                       {attendee.location && (
                         <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#09251B]/60 mt-0.5">
                           <MapPin className="w-3 h-3 text-[#0D4734]" />

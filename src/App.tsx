@@ -27,6 +27,7 @@ export default function App() {
   const [isCheckInModalOpen, setIsCheckInModalOpen] = useState<boolean>(false);
   // The richer profile sheet. Separate surface, separate state: check-in stays
   // name-only, and this only exists while an attendee has chosen to open it.
+  const [initialRecovery, setInitialRecovery] = useState(false);
   const [isProfileSheetOpen, setIsProfileSheetOpen] = useState<boolean>(false);
   const [isAnalyticsModalOpen, setIsAnalyticsModalOpen] = useState<boolean>(false);
   const [isFirstVisit, setIsFirstVisit] = useState<boolean>(false);
@@ -48,7 +49,7 @@ export default function App() {
   const [isAudienceMode, setIsAudienceMode] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     const params = new URLSearchParams(window.location.search);
-    return ['audience', 'community', 'mixer'].includes(params.get('mode') || '') || params.has('join') || window.location.pathname === '/join';
+    return ['audience', 'community', 'mixer'].includes(params.get('mode') || '') || params.has('round') || params.has('join') || window.location.pathname === '/join';
   });
 
   // Pull ?host=<key> out of the URL on the very first render (before anything is
@@ -70,7 +71,7 @@ export default function App() {
     const updateMode = () => {
       const params = new URLSearchParams(window.location.search);
       setIsMixerMode(params.get('mode') === 'mixer');
-      setIsAudienceMode(['audience', 'community', 'mixer'].includes(params.get('mode') || '') || params.has('join') || window.location.pathname === '/join');
+      setIsAudienceMode(['audience', 'community', 'mixer'].includes(params.get('mode') || '') || params.has('round') || params.has('join') || window.location.pathname === '/join');
     };
     window.addEventListener('popstate', updateMode);
     return () => window.removeEventListener('popstate', updateMode);
@@ -258,7 +259,7 @@ export default function App() {
     const data = await postRound('/api/round/extend', 'POST', { roundId: roomSessionState.activeRound?.id });
     applyRound(data.round);
   };
-  const handleOpenRound = async (opts: { kind: RoundKind; title: string; maxSelections: number; optionIds?: string[]; durationHours?: number }) => {
+  const handleOpenRound = async (opts: { kind: RoundKind; title: string; maxSelections: number; optionIds?: string[]; durationHours?: number; allowSquadSignup?: boolean }) => {
     const data = await postRound('/api/round/open', 'POST', opts);
     applyRound(data.round);
     // A fresh round means this device has not voted yet.
@@ -362,6 +363,18 @@ export default function App() {
       console.error('Failed to broadcast announcement:', err);
     }
   };
+
+  // Keep other tabs in this browser consistent after sign-out or profile switching.
+  useEffect(() => {
+    const changed = (event: StorageEvent) => {
+      if (event.key !== 'tcf_my_profile') return;
+      try {
+        if (!event.newValue || JSON.parse(event.newValue).id !== JSON.parse(event.oldValue || '{}').id) window.location.reload();
+      } catch { window.location.reload(); }
+    };
+    window.addEventListener('storage', changed);
+    return () => window.removeEventListener('storage', changed);
+  }, []);
 
   // Restore user profile & local votes from localStorage
   useEffect(() => {
@@ -499,6 +512,10 @@ export default function App() {
 
         // ---- Voting round lifecycle events ----
 
+        eventSource.addEventListener('ROUND_SQUAD_UPDATED', (e: MessageEvent) => {
+          if (isCancelled) return;
+          try { const { round } = JSON.parse(e.data); setLastRound(prev => prev?.id === round.id ? round : prev); } catch (err) { console.error(err); }
+        });
         eventSource.addEventListener('ROUND_UPDATED', (e: MessageEvent) => {
           try { applyRound(JSON.parse(e.data).round); } catch (err) { console.error(err); }
         });
@@ -652,6 +669,13 @@ export default function App() {
         }
       })
       .catch(() => {});
+  };
+
+  const handleSignOut = async () => {
+    const res = await fetch('/api/profile/signout', { method: 'POST' });
+    if (!res.ok) throw new Error('Could not sign out. Please try again.');
+    for (const key of ['tcf_my_profile', 'tcf_user_votes', 'tcf_user_commits']) localStorage.removeItem(key);
+    window.location.reload();
   };
 
   // Save profile handler
@@ -1107,9 +1131,13 @@ export default function App() {
     if (data.categories) setLiveCategories(data.categories);
     return data;
   };
-  const handleCommunityVote = async (id: string, commit: boolean, name?: string) => {
+  const handleCommunityVote = async (id: string, commit: boolean, name?: string, skill?: string) => {
     const selected = (commit ? myVotes.squads : myVotes.problems).includes(id);
-    await communityRequest(`/api/problems/${encodeURIComponent(id)}/${commit ? 'join-squad' : 'vote'}`, selected ? 'DELETE' : 'POST', { name: name || currentProfile?.name });
+    await communityRequest(`/api/problems/${encodeURIComponent(id)}/${commit ? 'join-squad' : 'vote'}`, selected ? 'DELETE' : 'POST', { name: name || currentProfile?.name, skill });
+  };
+  const handleRoundSquad = async (roundId: string, optionId: string, skill?: string) => {
+    const data = await communityRequest('/api/round/join-squad', 'POST', { roundId, optionId, skill, leave: skill === undefined });
+    if (data.archived) setLastRound(data.round); else applyRound(data.round);
   };
   const handleCommunityCategory = async (name: string) => {
     await communityRequest(`/api/categories/${encodeURIComponent(name)}/vote`, myVotes.categories.includes(name) ? 'DELETE' : 'POST');
@@ -1146,7 +1174,7 @@ export default function App() {
               problems={problems} attendees={attendees} categories={liveCategories}
               trustees={trusteeCandidates} profile={currentProfile} myVotes={myVotes}
               round={roomSessionState.activeRound || null} lastRound={lastRound} ballot={myRoundBallot}
-              onVote={handleCommunityVote} onVoteCategory={handleCommunityCategory} onVoteTrustee={handleCommunityTrustee}
+              onRoundSquad={handleRoundSquad} onVote={handleCommunityVote} onVoteCategory={handleCommunityCategory} onVoteTrustee={handleCommunityTrustee}
               onSubmit={handleCommunitySubmit} onComment={handleCommunityComment} onBallot={handleSubmitBallot}
               onProfile={() => setIsProfileSheetOpen(true)} onJoin={() => setIsCheckInModalOpen(true)}
               onMixer={() => selectParticipantMode(true)}
@@ -1190,8 +1218,9 @@ export default function App() {
 
           {/* Profile / Check-in Modal */}
           <FounderCheckInModal
+            initialRecovery={initialRecovery}
             isOpen={isCheckInModalOpen}
-            onClose={() => setIsCheckInModalOpen(false)}
+            onClose={() => { setIsCheckInModalOpen(false); setInitialRecovery(false); }}
             currentProfile={currentProfile}
             onSaveProfile={handleSaveProfile}
             isFirstCheckIn={isFirstVisit}
@@ -1199,7 +1228,8 @@ export default function App() {
 
           {/* Optional audience profile sheet (Give/Ask, role, skills, area, bio) */}
           <AudienceProfileSheet
-            onRecoverProfile={() => { setIsProfileSheetOpen(false); setIsCheckInModalOpen(true); }}
+            onSignOut={handleSignOut}
+            onRecoverProfile={() => { setInitialRecovery(true); setIsProfileSheetOpen(false); setIsCheckInModalOpen(true); }}
             isOpen={isProfileSheetOpen}
             currentProfile={currentProfile}
             onClose={() => setIsProfileSheetOpen(false)}
@@ -1317,15 +1347,17 @@ export default function App() {
 
           {/* Profile / Check-in Modal */}
           <FounderCheckInModal
+            initialRecovery={initialRecovery}
             isOpen={isCheckInModalOpen}
-            onClose={() => setIsCheckInModalOpen(false)}
+            onClose={() => { setIsCheckInModalOpen(false); setInitialRecovery(false); }}
             currentProfile={currentProfile}
             onSaveProfile={handleSaveProfile}
             isFirstCheckIn={isFirstVisit}
           />
 
           <AudienceProfileSheet
-            onRecoverProfile={() => { setIsProfileSheetOpen(false); setIsCheckInModalOpen(true); }}
+            onSignOut={handleSignOut}
+            onRecoverProfile={() => { setInitialRecovery(true); setIsProfileSheetOpen(false); setIsCheckInModalOpen(true); }}
             isOpen={isProfileSheetOpen}
             currentProfile={currentProfile}
             onClose={() => setIsProfileSheetOpen(false)}

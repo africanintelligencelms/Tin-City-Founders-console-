@@ -1,3 +1,5 @@
+export interface SquadMember { id: string; name: string; superpower?: string; }
+
 export interface AttendeeProfile {
   id: string;
   name: string;
@@ -7,6 +9,8 @@ export interface AttendeeProfile {
   giveAsk?: string;
   location?: string;
   whatsapp?: string;
+  organization?: string;
+  linkedin?: string;
   avatarColor?: string;
   checkedInAt?: string;
 }
@@ -29,6 +33,7 @@ export interface PlateauProblem {
   commitments: number;
   status: 'Ideation' | 'Squad Forming' | 'Active Squad' | 'Prototype Built';
   collaborators: string[];
+  squadMembers?: SquadMember[];
   skillsNeeded: string[];
   createdAt: string;
   comments: Comment[];
@@ -166,6 +171,7 @@ export interface LiveReactionEvent {
 export type RoundKind = 'problem' | 'category' | 'trustee';
 
 export interface RoundOption {
+  squadMembers?: SquadMember[];
   id: string;
   label: string;
   sublabel?: string;
@@ -191,6 +197,7 @@ export interface VotingRound {
   maxSelections: number;
   ballotsCast: number;
   openedAt: number;
+  allowSquadSignup?: boolean;
   durationHours?: number;
   endsAt?: string;
   closedAt?: number;

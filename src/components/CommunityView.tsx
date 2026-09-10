@@ -1,3 +1,4 @@
+import { SquadJoin, SquadRoster } from './SquadJoin';
 import React, { useEffect, useState } from 'react';
 import { Search, Plus, ThumbsUp, Users, ArrowRight, MessageSquare, X } from 'lucide-react';
 import type { AttendeeProfile, CategoryInfo, PlateauProblem, VotingRound, MyRoundBallot, MyVotes, TrusteeCandidate } from '../types';
@@ -5,7 +6,7 @@ import { BrandLogo } from './BrandLogo';
 import { AttendeeDirectory } from './AttendeeDirectory';
 import { SeamlessProblemWizard } from './SeamlessProblemWizard';
 import { RoundDeadline } from './RoundDeadline';
-import { RoundTakeover } from './RoundTakeover';
+import { CommunityBallot } from './CommunityBallot';
 
 interface Props {
   problems: PlateauProblem[];
@@ -17,7 +18,8 @@ interface Props {
   round: VotingRound | null;
   lastRound: VotingRound | null;
   ballot: MyRoundBallot;
-  onVote: (id: string, commit: boolean, name?: string) => Promise<void>;
+  onVote: (id: string, commit: boolean, name?: string, skill?: string) => Promise<void>;
+  onRoundSquad: (roundId: string, optionId: string, skill?: string) => Promise<void>;
   onVoteCategory: (name: string) => Promise<void>;
   onVoteTrustee: (id: string) => Promise<void>;
   onSubmit: React.ComponentProps<typeof SeamlessProblemWizard>['onSubmit'];
@@ -32,7 +34,17 @@ interface Props {
 }
 
 export function CommunityView(p: Props) {
-  const [view, setView] = useState<'problems' | 'members' | 'sectors' | 'trustees' | 'ballot'>('problems');
+  const [linkedRound, setLinkedRound] = useState(() => new URLSearchParams(window.location.search).get('round'));
+  const [view, setView] = useState<'problems' | 'members' | 'sectors' | 'trustees' | 'ballot'>(() => new URLSearchParams(window.location.search).has('round') ? 'ballot' : 'problems');
+  useEffect(() => {
+    const navigate = () => { const id = new URLSearchParams(window.location.search).get('round'); setLinkedRound(id); setView(id ? 'ballot' : 'problems'); };
+    window.addEventListener('popstate', navigate);
+    return () => window.removeEventListener('popstate', navigate);
+  }, []);
+  const openBallot = (id: string) => {
+    const url = new URL(window.location.href); url.searchParams.set('round', id); url.searchParams.set('mode', 'community');
+    window.history.pushState({}, '', url); setLinkedRound(id); setView('ballot');
+  };
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('All');
   const [sort, setSort] = useState('newest');
@@ -86,14 +98,15 @@ export function CommunityView(p: Props) {
 
       {round && <section className="bg-white border border-[#0D4734]/30 rounded-2xl p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
         <div><p className="text-xs font-bold uppercase text-[#0D4734]">{round.status === 'open' ? 'Community ballot · Open' : 'Latest ballot results'}</p><h2 className="font-bold text-lg">{round.title}</h2><p className="text-sm text-stone-600">{round.ballotsCast} ballots submitted</p><RoundDeadline round={round} /></div>
-        <button className={`${button} flex items-center gap-2`} onClick={() => setView('ballot')}>{round.status === 'open' ? 'View ballot' : 'View results'}<ArrowRight size={16} /></button>
+        <button className={`${button} flex items-center gap-2`} onClick={() => openBallot(round.id)}>{round.status === 'open' ? 'View ballot' : 'View results'}<ArrowRight size={16} /></button>
       </section>}
 
       <nav aria-label="Community sections" className="flex flex-wrap gap-2 mb-6">
         {([['problems', 'Challenges'], ['sectors', 'Sectors'], ['trustees', 'Trustees'], ['members', 'Member directory']] as const).map(([id, label]) => <button key={id} aria-current={view === id ? 'page' : undefined} onClick={() => setView(id)} className={`${button} ${view === id ? 'bg-[#0D4734] text-white hover:bg-[#166E52]' : 'bg-white'}`}>{label}</button>)}
       </nav>
       {error && <p role="alert" className="text-red-700 mb-4">{error}</p>}
-      {view === 'ballot' && (round ? <RoundTakeover key={round.id} embedded round={round} myBallot={p.ballot} voterName={p.profile?.name} onSubmitBallot={async selections => { if (!p.profile) { p.onJoin(); throw new Error('Join the community to submit your ballot.'); } await p.onBallot(selections); }} syncStatus={p.syncStatus} onReconnect={p.onReconnect} /> : <p>No ballot is available yet. You can still explore and support community challenges.</p>)}
+      {view === 'ballot' && (linkedRound || round?.id ? <CommunityBallot key={linkedRound || round!.id} roundId={linkedRound || round!.id} profile={p.profile} onJoin={p.onJoin} /> : <p>No ballot is available yet. You can still explore and support community challenges.</p>)}
+
       {view === 'members' && <AttendeeDirectory community attendees={p.attendees} currentProfile={p.profile} onOpenCheckIn={p.profile ? p.onProfile : p.onJoin} />}
       {view === 'problems' && <>
         <div className="flex flex-wrap gap-3 mb-4">
@@ -110,7 +123,7 @@ export function CommunityView(p: Props) {
             <p className="text-xs text-stone-500 mt-4 mb-5">Shared by {item.submittedBy} · {item.commitments} squad commitments</p>
             <div className="mt-auto flex flex-wrap gap-2 border-t pt-4">
               <button disabled={busy !== null} aria-pressed={p.myVotes.problems.includes(item.id)} className={`${button} flex items-center gap-2 ${p.myVotes.problems.includes(item.id) ? 'bg-amber-100' : ''}`} onClick={() => act(item.id, () => p.onVote(item.id, false))}><ThumbsUp size={16} />{p.myVotes.problems.includes(item.id) ? 'Supported' : 'Support'} · {item.upvotes}</button>
-              <button disabled={busy !== null} aria-pressed={p.myVotes.squads.includes(item.id)} className={`${button} flex items-center gap-2`} onClick={() => act(item.id, () => p.onVote(item.id, true, p.profile?.name))}><Users size={16} />{p.myVotes.squads.includes(item.id) ? 'Leave squad' : 'Join squad'}</button>
+              <SquadJoin joined={p.myVotes.squads.includes(item.id)} disabled={busy !== null} initialSkill={p.profile?.tags?.[0]} onChange={async skill => { if (!p.profile) { p.onJoin(); throw new Error("Join the community first, then choose your squad."); } await p.onVote(item.id, true, p.profile.name, skill); }} />
               <button className={`${button} flex items-center gap-2`} onClick={() => { setDetailId(item.id); setComment(''); }}><MessageSquare size={16} />Details · {item.comments.length}</button>
             </div>
           </article>)}
@@ -122,6 +135,6 @@ export function CommunityView(p: Props) {
     </main>
     <footer className="text-center text-xs text-stone-600 p-6">Tin City Founders · Serious ambition. Serious collaboration.</footer>
     <SeamlessProblemWizard isOpen={submitOpen} onClose={() => setSubmitOpen(false)} onSubmit={p.onSubmit} currentProfile={p.profile} categories={p.categories} />
-    {detail && <div role="dialog" aria-modal="true" aria-label="Challenge details" className="fixed inset-0 z-40 bg-black/50 p-4 overflow-y-auto flex items-start justify-center"><div className="bg-white rounded-2xl p-6 w-full max-w-2xl my-6"><button aria-label="Close challenge details" className="float-right p-2" onClick={() => setDetailId(null)}><X /></button><h2 className="text-2xl font-bold pr-10">{detail.title}</h2><p className="my-5 whitespace-pre-wrap">{detail.description}</p><h3 className="font-bold">Squad members</h3><p className="my-2 text-sm">{detail.collaborators.join(', ') || 'Be the first to join.'}</p><h3 className="font-bold mt-5">Discussion</h3>{detail.comments.map(item => <div key={item.id} className="border-t py-3 mt-2"><strong>{item.author}</strong><p className="text-sm whitespace-pre-wrap">{item.text}</p></div>)}<form onSubmit={e => { e.preventDefault(); if (comment.trim()) void act('comment', async () => { await p.onComment(detail.id, p.profile!.name, comment.trim()); setComment(''); }); }} className="mt-4"><textarea autoFocus aria-label="Your comment" required value={comment} onChange={e => setComment(e.target.value)} className="border rounded-xl p-3 w-full" placeholder="Add to the conversation" /><button disabled={busy !== null} className={button}>Post comment</button>{error && <p role="alert" className="text-red-700 mt-3">{error}</p>}</form></div></div>}
+    {detail && <div role="dialog" aria-modal="true" aria-label="Challenge details" className="fixed inset-0 z-40 bg-black/50 p-4 overflow-y-auto flex items-start justify-center"><div className="bg-white rounded-2xl p-6 w-full max-w-2xl my-6"><button aria-label="Close challenge details" className="float-right p-2" onClick={() => setDetailId(null)}><X /></button><h2 className="text-2xl font-bold pr-10">{detail.title}</h2><p className="my-5 whitespace-pre-wrap">{detail.description}</p><h3 className="font-bold">Squad members</h3><SquadRoster members={detail.squadMembers} legacyNames={detail.collaborators} /><h3 className="font-bold mt-5">Discussion</h3>{detail.comments.map(item => <div key={item.id} className="border-t py-3 mt-2"><strong>{item.author}</strong><p className="text-sm whitespace-pre-wrap">{item.text}</p></div>)}<form onSubmit={e => { e.preventDefault(); if (comment.trim()) void act('comment', async () => { await p.onComment(detail.id, p.profile!.name, comment.trim()); setComment(''); }); }} className="mt-4"><textarea autoFocus aria-label="Your comment" required value={comment} onChange={e => setComment(e.target.value)} className="border rounded-xl p-3 w-full" placeholder="Add to the conversation" /><button disabled={busy !== null} className={button}>Post comment</button>{error && <p role="alert" className="text-red-700 mt-3">{error}</p>}</form></div></div>}
   </div>;
 }

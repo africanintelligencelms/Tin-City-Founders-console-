@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
+import type { SquadMember } from "./src/types";
 import { normalizePhone } from "./src/utils/phone";
 
 const app = express();
@@ -530,7 +531,7 @@ const defaultTrusteeCandidates = [
 ];
 
 // Room State In-Memory Store
-type ServerProblem = (typeof defaultProblems)[number] & { baseUpvotes?: number; baseCommitments?: number };
+type ServerProblem = (typeof defaultProblems)[number] & { baseUpvotes?: number; baseCommitments?: number; squadMembers?: SquadMember[] };
 type ServerTrustee = (typeof defaultTrusteeCandidates)[number] & { baseVotes?: number };
 
 // The room starts EMPTY and fills as real people scan in. The default* arrays
@@ -548,7 +549,8 @@ const emptyCategoriesStore = Object.fromEntries(
 ) as typeof defaultCategoriesStore;
 
 let problems: ServerProblem[] = SEED_ROOM ? [...defaultProblems] : [];
-let attendees = SEED_ROOM ? [...defaultAttendees] : ([] as typeof defaultAttendees);
+type ServerAttendee = (typeof defaultAttendees)[number] & { organization?: string; linkedin?: string };
+let attendees: ServerAttendee[] = SEED_ROOM ? [...defaultAttendees] : [];
 let memberContacts: Record<string, { phone: string; voterId: string }> = {};
 let categoriesStore = SEED_ROOM ? { ...defaultCategoriesStore } : emptyCategoriesStore;
 let trusteeCandidates: ServerTrustee[] = SEED_ROOM ? [...defaultTrusteeCandidates] : [];
@@ -584,6 +586,7 @@ interface VoteRecord {
   kind: VoteKind;
   targetId: string;
   voterName?: string;
+  superpower?: string;
   ts: number;
 }
 
@@ -636,6 +639,7 @@ function recomputeCounts() {
     tally.set(k, (tally.get(k) || 0) + 1);
   }
   for (const p of problems) {
+    p.squadMembers = voteRecords.filter(r => r.kind === 'squad' && r.targetId === p.id).map(r => ({ id: r.id, name: r.voterName || 'Member', ...(r.superpower ? { superpower: r.superpower } : {}) }));
     p.upvotes = (p.baseUpvotes ?? 0) + (tally.get(`problem:${p.id}`) || 0);
     p.commitments = (p.baseCommitments ?? 0) + (tally.get(`squad:${p.id}`) || 0);
   }
@@ -733,6 +737,7 @@ type RoundKind = "problem" | "category" | "trustee";
 type RoundStatus = "open" | "revealed";
 
 interface RoundOption {
+  squadMembers?: SquadMember[];
   id: string;
   label: string;
   sublabel?: string;
@@ -756,6 +761,7 @@ interface VotingRound {
   maxSelections: number;
   ballotsCast: number;
   openedAt: number;
+  allowSquadSignup?: boolean;
   durationHours?: number;
   endsAt?: string;
   closedAt?: number;
@@ -774,7 +780,7 @@ interface RoundBallot {
 
 let activeRound: VotingRound | null = null;
 let roundBallots: RoundBallot[] = [];
-// Completed rounds, newest first, capped so the state file stays small.
+// Completed rounds, newest first. Retain summaries so shared round links stay valid.
 let roundHistory: VotingRound[] = [];
 let revealTimer: NodeJS.Timeout | null = null;
 
@@ -833,7 +839,6 @@ try {
     if (activeRound && activeRound.status === "revealed" && !activeRound.endsAt) {
       const staleId = activeRound.id;
       roundHistory.unshift(activeRound);
-      if (roundHistory.length > 20) roundHistory.length = 20;
       roundBallots = roundBallots.filter(b => b.roundId !== staleId);
       activeRound = null;
       console.log(`Archived a round that was mid-reveal when the server restarted (${staleId}).`);
@@ -1228,19 +1233,25 @@ function ballotFor(roundId: string | null, voterId: string) {
   return { roundId, selections: b ? b.selections : [], hasVoted: !!b };
 }
 
-// Current round plus what this device has already submitted.
+// Live breakdowns are computed for voters only, never stored in shared state/SSE.
 app.get("/api/round", (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  const requestedId = typeof req.query.round === 'string' ? req.query.round : undefined;
+  const selected = requestedId ? (activeRound?.id === requestedId ? activeRound : roundHistory.find(r => r.id === requestedId)) : activeRound;
+  if (requestedId && !selected) return res.status(404).json({ success: false, error: 'This ballot is unavailable or is no longer retained.' });
+  const myBallot = ballotFor(selected?.id ?? null, req.voterId);
   res.json({
     success: true,
-    round: activeRound,
-    myBallot: ballotFor(activeRound?.id ?? null, req.voterId),
+    round: selected && selected.status === 'open' && myBallot.hasVoted ? { ...selected, results: tallyRound(selected) } : selected,
+    myBallot,
     history: roundHistory.slice(0, 10)
   });
 });
 
 // Host opens a round. The host picks the ballot type per round.
 app.post("/api/round/open", requireHost, (req, res) => {
-  const { kind, title, prompt, optionIds, maxSelections, durationHours, endsAt } = req.body || {};
+  const { kind, title, prompt, optionIds, maxSelections, durationHours, endsAt, allowSquadSignup } = req.body || {};
+  if (allowSquadSignup !== undefined && typeof allowSquadSignup !== "boolean") return res.status(400).json({ error: "Squad signup must be enabled or disabled." });
   const openedAt = Date.now();
   let deadline: string | undefined;
   let duration: number | undefined;
@@ -1290,6 +1301,7 @@ app.post("/api/round/open", requireHost, (req, res) => {
     maxSelections: Number.isFinite(cap) && cap >= 1 ? Math.min(Math.floor(cap), options.length) : 1,
     ballotsCast: 0,
     openedAt,
+    allowSquadSignup: allowSquadSignup !== false,
     ...(deadline ? { endsAt: deadline, durationHours: duration } : {})
   };
 
@@ -1391,6 +1403,27 @@ app.post('/api/round/extend', requireHost, (req, res) => {
   res.json({ success: true, round: activeRound });
 });
 
+// Signup remains available after voting closes, including archived results.
+app.post('/api/round/join-squad', (req, res) => {
+  const { roundId, optionId, skill, leave } = req.body || {};
+  const round = activeRound?.id === roundId ? activeRound : roundHistory.find(r => r.id === roundId);
+  const option = round?.options.find(o => o.id === optionId);
+  if (!round || !option) return res.status(404).json({ success: false, error: 'This ballot option is unavailable.' });
+  if (round.allowSquadSignup === false && leave !== true) return res.status(409).json({ success: false, error: 'Squad signup is disabled for this ballot.' });
+  const memberId = Object.keys(memberContacts).find(id => memberContacts[id].voterId === req.voterId);
+  const member = attendees.find(a => a.id === memberId);
+  if (!member) return res.status(401).json({ success: false, error: 'Join the community first.' });
+  if (leave !== true && (typeof skill !== 'string' || !skill.trim() || skill.length > 80)) return res.status(400).json({ success: false, error: 'Choose a skill of up to 80 characters.' });
+  option.squadMembers = (option.squadMembers || []).filter(m => m.id !== member.id);
+  if (leave !== true) option.squadMembers.push({ id: member.id, name: member.name, superpower: skill.trim() });
+  syncRoundToSession();
+  persistState();
+  if (round === activeRound) broadcastSSE('ROUND_UPDATED', { round });
+  else broadcastSSE('ROUND_SQUAD_UPDATED', { round });
+  broadcastStateUpdate('squad_updated', `${member.name} ${leave === true ? 'left' : 'joined'} the squad for "${option.label}"`, member.name);
+  res.json({ success: true, round, archived: round !== activeRound });
+});
+
 // Host closes the round: tally, reveal, and schedule the return to idle.
 app.post("/api/round/close", requireHost, (req, res) => {
   if (!activeRound) {
@@ -1422,7 +1455,6 @@ function archiveActiveRound() {
   if (!activeRound) return;
   const archived = activeRound;
   roundHistory.unshift(activeRound);
-  if (roundHistory.length > 20) roundHistory.length = 20;
   const clearedId = activeRound.id;
   // The tally is already snapshotted into round.results, so the individual
   // ballots have served their purpose. Dropping them keeps the state file flat
@@ -1697,18 +1729,30 @@ app.post("/api/profile/recover", (req, res) => {
 });
 
 app.get("/api/profile/me", (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
   const match = Object.entries(memberContacts).find(([, contact]) => contact.voterId === req.voterId);
   const attendee = match && attendees.find(a => a.id === match[0]);
   res.json({ attendee: attendee ? { ...attendee, whatsapp: match![1].phone } : null });
 });
 
+// Sign out this browser only. Keep the member and their votes for phone recovery.
+app.post('/api/profile/signout', (req, res) => {
+  const secure = req.secure || String(req.headers['x-forwarded-proto']).toLowerCase() === 'https';
+  res.removeHeader('Set-Cookie');
+  res.cookie(VOTER_COOKIE, crypto.randomBytes(16).toString('hex'), { httpOnly: true, sameSite: 'lax', secure, maxAge: 365 * 24 * 60 * 60 * 1000 });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ success: true });
+});
+
 // Check-in or update attendee profile
 app.post(["/api/attendees", "/api/attendees/checkin"], (req, res) => {
-  const { id, name, title, tags, bio, giveAsk, location, avatarColor, whatsapp } = req.body;
+  const { id, name, title, tags, bio, giveAsk, location, avatarColor, whatsapp, organization, linkedin } = req.body;
   if (typeof name !== "string" || !name.trim()) {
     return res.status(400).json({ success: false, error: "Name is required for check-in" });
   }
 
+  if (name.trim().length > 80) return res.status(400).json({ error: 'Keep your display name within 80 characters.' });
+  if (organization !== undefined && (typeof organization !== 'string' || organization.length > 160)) return res.status(400).json({ error: 'Keep your organization within 160 characters.' });
   const attendeeId = id || `att-${Date.now()}`;
   const existingIndex = attendees.findIndex(a => a.id === attendeeId);
   const existing = existingIndex >= 0 ? attendees[existingIndex] : undefined;
@@ -1733,10 +1777,26 @@ app.post(["/api/attendees", "/api/attendees/checkin"], (req, res) => {
   const text = (value: unknown, previous: string | undefined) =>
     typeof value === "string" ? value.trim() : (previous ?? "");
 
+  let linkedinUrl = existing?.linkedin || '';
+  if (linkedin !== undefined) {
+    if (typeof linkedin !== 'string') return res.status(400).json({ error: 'Enter a LinkedIn profile URL.' });
+    linkedinUrl = linkedin.trim();
+    if (linkedinUrl) {
+      try {
+        const url = new URL(/^https?:\/\//i.test(linkedinUrl) ? linkedinUrl : `https://${linkedinUrl}`);
+        if (url.protocol !== 'https:' || !['linkedin.com', 'www.linkedin.com'].includes(url.hostname) || !url.pathname.startsWith('/in/') || url.pathname.length <= 4 || url.username || url.password || url.port) throw new Error();
+        url.search = ''; url.hash = ''; linkedinUrl = url.toString();
+      } catch { return res.status(400).json({ error: 'Use a LinkedIn profile URL such as https://www.linkedin.com/in/your-name.' }); }
+    }
+  }
+  if (avatarColor !== undefined && (typeof avatarColor !== 'string' || !/^#[0-9a-f]{6}$/i.test(avatarColor))) return res.status(400).json({ error: 'Choose a valid avatar colour.' });
+
   const newAttendee = {
     id: attendeeId,
     name: name.trim(),
     title: text(title, existing?.title),
+    organization: text(organization, existing?.organization),
+    linkedin: linkedinUrl,
     tags: Array.isArray(tags)
       ? tags.filter((t: unknown): t is string => typeof t === "string" && t.trim().length > 0).map((t: string) => t.trim())
       : (existing?.tags ?? []),
@@ -1753,6 +1813,20 @@ app.post(["/api/attendees", "/api/attendees/checkin"], (req, res) => {
     attendees.unshift(newAttendee);
   }
 
+  // Identity remains stable when display names change, including squad rosters.
+  if (existing && existing.name !== newAttendee.name) {
+    const affected = new Set(voteRecords.filter(r => r.kind === 'squad' && r.voterId === req.voterId).map(r => r.targetId));
+    for (const record of voteRecords) if (record.voterId === req.voterId) record.voterName = newAttendee.name;
+    for (const ballot of roundBallots) if (ballot.voterId === req.voterId) ballot.voterName = newAttendee.name;
+    for (const problem of problems) if (affected.has(problem.id)) {
+      if (!voteRecords.some(r => r.kind === 'squad' && r.targetId === problem.id && r.voterName === existing.name)) problem.collaborators = problem.collaborators.filter(n => n !== existing.name);
+      if (!problem.collaborators.includes(newAttendee.name)) problem.collaborators.push(newAttendee.name);
+    }
+    for (const round of [...roundHistory, ...(activeRound ? [activeRound] : [])]) for (const option of round.options) for (const member of option.squadMembers || []) if (member.id === attendeeId) member.name = newAttendee.name;
+    recomputeCounts();
+    syncRoundToSession();
+    if (activeRound) broadcastSSE('ROUND_UPDATED', { round: activeRound });
+  }
   memberContacts[attendeeId] = { phone, voterId: req.voterId };
   broadcastStateUpdate("attendee_checkin", `${newAttendee.name} checked in to the meetup`, newAttendee.name);
   res.json({ success: true, attendee: { ...newAttendee, whatsapp: phone }, attendees });
@@ -2064,7 +2138,10 @@ app.post("/api/problems/:id/join-squad", (req, res) => {
     return res.status(404).json({ success: false, error: "Problem not found" });
   }
 
-  const founderName = name ? String(name).trim() : "Jos Innovator";
+  const memberId = Object.keys(memberContacts).find(id => memberContacts[id].voterId === req.voterId);
+  const member = attendees.find(a => a.id === memberId);
+  const founderName = member?.name || (name ? String(name).trim() : "Jos Innovator");
+  if (skill !== undefined && (typeof skill !== 'string' || !skill.trim() || skill.length > 80)) return res.status(400).json({ success: false, error: 'Choose a skill of up to 80 characters.' });
 
   if (!recordVote("squad", problem.id, req.voterId, founderName)) {
     return res.status(409).json({
@@ -2076,6 +2153,8 @@ app.post("/api/problems/:id/join-squad", (req, res) => {
       myVotes: myVotesFor(req.voterId)
     });
   }
+  const commitment = voteRecords.find(r => r.kind === 'squad' && r.targetId === problem.id && r.voterId === req.voterId);
+  if (commitment && typeof skill === 'string') commitment.superpower = skill.trim();
   recordVote("problem", problem.id, req.voterId, founderName);
   if (!problem.collaborators.includes(founderName)) {
     problem.collaborators.push(founderName);

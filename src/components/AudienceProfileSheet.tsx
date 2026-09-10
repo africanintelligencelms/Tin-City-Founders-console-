@@ -9,28 +9,23 @@ interface AudienceProfileSheetProps {
   currentProfile: AttendeeProfile | null;
   onClose: () => void;
   onRecoverProfile: () => void;
+  onSignOut: () => Promise<void>;
   onSaveProfile: (profile: AttendeeProfile) => Promise<void>;
 }
 
-/**
- * The audience profile sheet.
- *
- * Check-in stays name-only on purpose. Everything richer lives here, behind the
- * profile control in the audience header, as a separate full-screen surface that
- * covers the participation view and then gets out of the way. Nothing is added
- * to the default audience screen: the room was told last time that the phone UI
- * was too complex, so this only exists while somebody has deliberately opened it.
- *
- * Every field is optional and every field starts blank unless the attendee
- * previously typed something. Nothing here invents a title, a tag or a town.
- */
 export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
   isOpen,
   currentProfile,
   onClose,
   onRecoverProfile,
+  onSignOut,
   onSaveProfile
 }) => {
+  const [name, setName] = useState('');
+  const [avatarColor, setAvatarColor] = useState('#0D4734');
+  const [organization, setOrganization] = useState('');
+  const [linkedin, setLinkedin] = useState('');
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [whatsapp, setWhatsapp] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -44,6 +39,11 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
   // draft that was abandoned last time never resurfaces as if it were saved.
   useEffect(() => {
     if (!isOpen) return;
+    setName(currentProfile?.name || '');
+    setAvatarColor(currentProfile?.avatarColor || '#0D4734');
+    setOrganization(currentProfile?.organization || '');
+    setLinkedin(currentProfile?.linkedin || '');
+    setConfirmSignOut(false);
     setWhatsapp(currentProfile?.whatsapp || '');
     setError('');
     setGiveAsk(currentProfile?.giveAsk || '');
@@ -82,6 +82,7 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
     try {
     await onSaveProfile({
       ...currentProfile,
+      name: name.trim(), avatarColor, organization: organization.trim(), linkedin: linkedin.trim(),
       whatsapp: normalizePhone(whatsapp),
       title: title.trim(),
       tags: tags.map(t => t.trim()).filter(Boolean),
@@ -101,7 +102,7 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
         <div className="min-w-0">
           <h2 className="text-base font-display font-black leading-tight truncate">Your Profile</h2>
           <p className="text-[11px] text-emerald-200/90 truncate">
-            All optional. Fill in what you want people to know.
+            Keep your name up to date. Everything else is optional.
           </p>
         </div>
         <button
@@ -118,21 +119,13 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
       <form onSubmit={handleSave} className="flex-1 min-h-0 flex flex-col">
         <div className="flex-1 overflow-y-auto px-4 py-4">
           <div className="max-w-xl mx-auto w-full space-y-5">
-            {/* Who this is. Read-only here — the name and badge colour belong to check-in. */}
-            <div className="flex items-center gap-3">
-              <div
-                className="w-11 h-11 rounded-xl flex items-center justify-center font-display font-black text-lg text-white shrink-0"
-                style={{ backgroundColor: currentProfile.avatarColor || '#0D4734' }}
-              >
-                {currentProfile.name.charAt(0).toUpperCase()}
-              </div>
-              <div className="min-w-0">
-                <div className="text-sm font-display font-black text-[#09251B] truncate">
-                  {currentProfile.name}
-                </div>
-                <div className="text-[11px] text-stone-500">Checked in</div>
-              </div>
-            </div>
+            <section className="space-y-3">
+              <label className="block text-sm font-bold">Display name<input aria-label="Display name" required maxLength={80} value={name} onChange={e => setName(e.target.value)} className="block w-full border rounded-xl p-3 mt-1" /></label>
+              <fieldset><legend className="text-sm font-bold mb-2">Avatar colour</legend><div className="flex flex-wrap gap-2">{['#0D4734','#E5A93C','#BF7E1D','#166E52','#C85A28','#0F6B5C'].map((color, i) => <button key={color} type="button" aria-label={['Forest green','Plateau gold','Ochre','Emerald','Terracotta','Teal'][i]} aria-pressed={avatarColor === color} onClick={() => setAvatarColor(color)} style={{backgroundColor:color}} className="w-11 h-11 rounded-xl border-2 border-stone-500 text-white">{avatarColor === color ? '✓' : ''}</button>)}</div></fieldset>
+              <label className="block text-sm font-bold">Organization / venture<input aria-label="Organization / venture" maxLength={160} value={organization} onChange={e => setOrganization(e.target.value)} className="block w-full border rounded-xl p-3 mt-1" /></label>
+              <label className="block text-sm font-bold">LinkedIn profile<input aria-label="LinkedIn profile" placeholder="https://www.linkedin.com/in/your-name" value={linkedin} onChange={e => setLinkedin(e.target.value)} className="block w-full border rounded-xl p-3 mt-1" /></label>
+              <p className="text-xs text-stone-600">Your organization and LinkedIn profile appear in the member directory.</p>
+            </section>
 
             <section className="space-y-2 bg-white p-4 rounded-2xl border border-stone-300">
               <label htmlFor="profile-whatsapp" className="block text-sm font-bold">WhatsApp number (optional)</label>
@@ -141,6 +134,10 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
               <button type="button" onClick={onRecoverProfile} className="text-xs font-bold text-[#0D4734] underline">Already have another profile? Find it</button>
               <p className="text-xs text-stone-500">Use this number with “Already joined?” next time. No verification code is required.</p>
             </section>
+            <section className="rounded-xl border p-4 space-y-2">
+              <button type="button" disabled={saving} className="font-bold underline" onClick={() => setConfirmSignOut(true)}>Sign out / switch profile</button>
+              {confirmSignOut && <div><p className="text-sm">{currentProfile.whatsapp ? 'Your saved profile and votes will remain. Use your saved phone number to sign back in.' : 'No phone number is saved. Add and save one first if you want to recover this profile after signing out.'}</p><div className="flex gap-3 mt-2"><button type="button" disabled={saving} className="font-bold underline" onClick={async () => { setSaving(true); setError(''); try { await onSignOut(); } catch (e) { setError(e instanceof Error ? e.message : 'Could not sign out.'); } finally { setSaving(false); } }}>Sign out now</button><button type="button" disabled={saving} onClick={() => setConfirmSignOut(false)}>Stay signed in</button></div></div>}
+            </section>
             {/* GIVE & ASK — the one field worth a stranger's attention at a mixer. */}
             <section className="bg-white rounded-2xl border-2 border-[#0D4734] shadow-[3px_3px_0px_0px_#09251B] p-4 space-y-2">
               <label htmlFor="profile-give-ask" className="flex items-center gap-2 text-[#0D4734]">
@@ -148,8 +145,7 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
                 <span className="text-sm font-display font-black">Give &amp; Ask</span>
               </label>
               <p className="text-[11px] text-stone-600 leading-relaxed">
-                What can you offer the room, and what do you need from it? This is what shows up
-                on the big screen and in the directory.
+                What can you offer the community, and what do you need? This appears in the member directory.
               </p>
               <textarea
                 id="profile-give-ask"
@@ -167,7 +163,7 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
                 htmlFor="profile-title"
                 className="block text-xs font-display font-bold uppercase tracking-wide text-stone-700"
               >
-                Role / Venture
+                Role
               </label>
               <input
                 id="profile-title"

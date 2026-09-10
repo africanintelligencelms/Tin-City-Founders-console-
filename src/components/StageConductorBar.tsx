@@ -1,3 +1,4 @@
+import { WhatsAppBroadcastDeck } from './WhatsAppBroadcastDeck';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Radio, Megaphone, Send, Lock, Unlock, QrCode, Copy, Check, Users,
@@ -20,7 +21,7 @@ interface StageConductorBarProps {
   onOpenQRModal?: () => void;
   isCompact?: boolean;
   // Round lifecycle — the host picks the ballot type each round.
-  onOpenRound?: (opts: { kind: RoundKind; title: string; maxSelections: number; optionIds?: string[]; durationHours?: number }) => Promise<void>;
+  onOpenRound?: (opts: { kind: RoundKind; title: string; maxSelections: number; optionIds?: string[]; durationHours?: number; allowSquadSignup?: boolean }) => Promise<void>;
   onExtendRound?: () => Promise<void>;
   onCloseRound?: () => Promise<void>;
   onClearRound?: () => Promise<void>;
@@ -130,6 +131,7 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
   const [roundKind, setRoundKind] = useState<RoundKind>('problem');
+  const [allowSquadSignup, setAllowSquadSignup] = useState(true);
   const [roundDuration, setRoundDuration] = useState('48');
   const [customHours, setCustomHours] = useState(120);
   const [roundTitle, setRoundTitle] = useState<string>('');
@@ -263,6 +265,7 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
     await runRoundAction(() =>
       onOpenRound!({
         kind: roundKind,
+        allowSquadSignup,
         title: roundTitle.trim() || `Live ${kindLabel} vote`,
         maxSelections: Math.max(1, roundPicks),
         ...(roundDuration === 'manual' ? {} : { durationHours: roundDuration === 'custom' ? customHours : Number(roundDuration) }),
@@ -532,6 +535,7 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
             </div>
 
             {/* ---------------- Voting Round Lifecycle ---------------- */}
+            <WhatsAppBroadcastDeck rounds={[...(activeRound ? [activeRound] : []), ...roundHistory, ...(lastRound ? [lastRound] : [])].filter((r, i, all) => all.findIndex(x => x.id === r.id) === i)} />
             {activeRound?.endsAt && <div className="p-3 text-white"><RoundDeadline round={activeRound} />{activeRound.status === 'open' && onExtendRound && <button disabled={isRoundBusy} onClick={() => runRoundAction(onExtendRound)} className="mt-2 px-3 py-2 border border-emerald-500 rounded-xl text-xs">Extend deadline by 24 hours</button>}</div>}
             {(onOpenRound || onCloseRound) && (
               <div className="mt-4 pt-4 border-t border-emerald-800/40">
@@ -564,6 +568,7 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
                         ))}
                       </div>
 
+                      <label className="text-sm text-white"><input type="checkbox" checked={allowSquadSignup} onChange={e => setAllowSquadSignup(e.target.checked)} /> Allow squad signup</label>
                       <label className="text-xs text-white">Voting window
                         <select aria-label="Voting window" value={roundDuration} onChange={e => setRoundDuration(e.target.value)} className="block rounded-xl bg-[#09251B] p-2 border border-emerald-700">
                           <option value="24">24 hours</option><option value="48">48 hours</option><option value="72">3 days</option><option value="168">7 days</option><option value="custom">Custom hours</option><option value="manual">Manual close (mixer)</option>

@@ -1,3 +1,4 @@
+import { VoterShare } from './VoterShare';
 import React, { useState, useEffect, useMemo } from 'react';
 import { Vote, CheckCircle2, Trophy, Radio, Loader2, Users, AlertCircle, RefreshCw } from 'lucide-react';
 import { RoundDeadline, useRoundExpired } from './RoundDeadline';
@@ -35,11 +36,12 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const ballotSelectionKey = JSON.stringify(myBallot.selections || []);
   // A new round always starts from a clean ballot.
   useEffect(() => {
     setSelections(myBallot.roundId === round.id ? myBallot.selections || [] : []);
     setError(null);
-  }, [round.id, myBallot.roundId, myBallot.selections]);
+  }, [round.id, myBallot.roundId, ballotSelectionKey]);
 
   const isMulti = round.maxSelections > 1;
   const atCap = selections.length >= round.maxSelections;
@@ -124,6 +126,7 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
             {round.ballotsCast} ballot{round.ballotsCast === 1 ? '' : 's'} cast · {KIND_LABEL[round.kind]}
           </p>
 
+          <VoterShare round={round} ballot={myBallot} />
           {winner && (
             <div className="rounded-2xl bg-amber-500/15 border border-amber-400/40 p-4 mb-5">
               <div className="text-amber-300 text-[11px] font-mono font-bold uppercase tracking-wider mb-1">
@@ -167,7 +170,7 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
           </div>
 
           <p className="text-center text-white/35 text-xs mt-6">
-            Returning to the room shortly…
+            {round.endsAt || embedded ? 'Voting is closed. These are the final results.' : 'Returning to the room shortly…'}
           </p>
         </div>
       </div>
@@ -205,11 +208,21 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
           <div className="rounded-xl bg-emerald-500/15 border border-emerald-400/40 p-3 mb-4 flex items-start gap-2">
             <CheckCircle2 size={16} className="text-emerald-400 shrink-0 mt-0.5" />
             <p className="text-emerald-100 text-xs">
-              Your ballot is in{voterName ? `, ${voterName}` : ''}. You can change it until the host closes the round.
+              Your ballot is in{voterName ? `, ${voterName}` : ''}. You can change it until voting closes.
             </p>
           </div>
         )}
 
+        <VoterShare round={round} ballot={myBallot} />
+        {alreadyVoted && round.results && <section aria-label="Live ballot results" className="rounded-xl border border-emerald-400/30 p-4 mb-5">
+          <h2 className="font-bold">Live results · voting is still open</h2>
+          <p className="text-xs text-white/60 mb-3">Percentages show the share of voters who chose each option.{isMulti ? ' With multiple choices, percentages can total more than 100%.' : ''}</p>
+          {round.results.map((entry, index, all) => <div key={entry.optionId} className="mb-3">
+            <div className="flex justify-between gap-3 text-sm"><span>#{all.findIndex(r => r.votes === entry.votes) + 1} {entry.label}</span><span>{entry.votes} · {Math.round(entry.share * 100)}%</span></div>
+            <div className="h-2 bg-white/10 rounded mt-1"><div className="h-2 bg-emerald-400 rounded" style={{width: `${entry.share * 100}%`}} /></div>
+          </div>)}
+        </section>}
+        {!alreadyVoted && <p className="text-sm text-white/60 mb-4">Vote to see the live results. Until then, only participation is shown.</p>}
         <div className="space-y-2">
           {round.options.map(option => {
             const picked = selections.includes(option.id);
