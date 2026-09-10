@@ -756,6 +756,8 @@ interface VotingRound {
   maxSelections: number;
   ballotsCast: number;
   openedAt: number;
+  durationHours?: number;
+  endsAt?: string;
   closedAt?: number;
   results?: RoundResultEntry[];
 }
@@ -828,7 +830,7 @@ try {
     // round goes straight into history. Archived inline rather than through
     // archiveActiveRound() because the SSE client set is not constructed yet at
     // this point in module evaluation (and there is nobody connected to tell).
-    if (activeRound && activeRound.status === "revealed") {
+    if (activeRound && activeRound.status === "revealed" && !activeRound.endsAt) {
       const staleId = activeRound.id;
       roundHistory.unshift(activeRound);
       if (roundHistory.length > 20) roundHistory.length = 20;
@@ -947,6 +949,10 @@ function broadcastStateUpdate(actionType: string, summary: string, author = "Roo
 }
 
 // SSE Connection Endpoint
+// Every later API request checks the deadline, including votes and new SSE connections.
+// This prevents late ballots even between background ticks.
+app.use('/api', (_req, _res, next) => { expireRoundIfNeeded(); next(); });
+
 app.get("/api/live/stream", (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -1234,7 +1240,17 @@ app.get("/api/round", (req, res) => {
 
 // Host opens a round. The host picks the ballot type per round.
 app.post("/api/round/open", requireHost, (req, res) => {
-  const { kind, title, prompt, optionIds, maxSelections } = req.body || {};
+  const { kind, title, prompt, optionIds, maxSelections, durationHours, endsAt } = req.body || {};
+  const openedAt = Date.now();
+  let deadline: string | undefined;
+  let duration: number | undefined;
+  if (durationHours !== undefined || endsAt !== undefined) {
+    if (durationHours !== undefined && endsAt !== undefined) return res.status(400).json({ error: "Provide a duration or a deadline, not both." });
+    const end = endsAt !== undefined ? (typeof endsAt === 'string' ? Date.parse(endsAt) : NaN) : openedAt + (typeof durationHours === 'number' ? durationHours : NaN) * 3600000;
+    duration = (end - openedAt) / 3600000;
+    if (!Number.isFinite(end) || duration <= 0 || duration > 720) return res.status(400).json({ error: "Deadline must be in the future and within 30 days." });
+    deadline = new Date(end).toISOString();
+  }
 
   // A live round must be closed deliberately by the host. Nothing here ends it.
   if (activeRound && activeRound.status === "open") {
@@ -1273,7 +1289,8 @@ app.post("/api/round/open", requireHost, (req, res) => {
     options,
     maxSelections: Number.isFinite(cap) && cap >= 1 ? Math.min(Math.floor(cap), options.length) : 1,
     ballotsCast: 0,
-    openedAt: Date.now()
+    openedAt,
+    ...(deadline ? { endsAt: deadline, durationHours: duration } : {})
   };
 
   syncRoundToSession();
@@ -1339,19 +1356,12 @@ app.post("/api/round/vote", (req, res) => {
   });
 });
 
-// Host closes the round: tally, reveal, and schedule the return to idle.
-app.post("/api/round/close", requireHost, (req, res) => {
-  if (!activeRound) {
-    return res.status(409).json({ success: false, error: "There is no round to close." });
-  }
-  if (activeRound.status === "revealed") {
-    return res.json({ success: true, round: activeRound });
-  }
-
+function closeActiveRound(expired: boolean) {
+  if (!activeRound || activeRound.status !== 'open') return;
   activeRound.results = tallyRound(activeRound);
   activeRound.ballotsCast = roundBallots.filter(b => b.roundId === activeRound!.id).length;
   activeRound.status = "revealed";
-  activeRound.closedAt = Date.now();
+  activeRound.closedAt = expired && activeRound.endsAt ? Date.parse(activeRound.endsAt) : Date.now();
 
   syncRoundToSession();
   persistState();
@@ -1362,6 +1372,37 @@ app.post("/api/round/close", requireHost, (req, res) => {
     `Round closed: "${activeRound.title}" — ${activeRound.ballotsCast} ballot(s) cast`,
     "Host Conductor"
   );
+
+}
+
+function expireRoundIfNeeded() {
+  if (activeRound?.status === 'open' && activeRound.endsAt && Date.now() >= Date.parse(activeRound.endsAt)) closeActiveRound(true);
+}
+
+app.post('/api/round/extend', requireHost, (req, res) => {
+  if (!activeRound || activeRound.status !== 'open' || !activeRound.endsAt || req.body?.roundId !== activeRound.id) return res.status(409).json({ error: 'This timed round is no longer open.', round: activeRound });
+  const end = Date.parse(activeRound.endsAt) + 24 * 3600000;
+  if (end - activeRound.openedAt > 720 * 3600000) return res.status(400).json({ error: 'A round can run for at most 30 days.' });
+  activeRound.endsAt = new Date(end).toISOString();
+  activeRound.durationHours = (end - activeRound.openedAt) / 3600000;
+  syncRoundToSession();
+  persistState();
+  broadcastSSE('ROUND_UPDATED', { round: activeRound });
+  res.json({ success: true, round: activeRound });
+});
+
+// Host closes the round: tally, reveal, and schedule the return to idle.
+app.post("/api/round/close", requireHost, (req, res) => {
+  if (!activeRound) {
+    return res.status(409).json({ success: false, error: "There is no round to close." });
+  }
+  if (activeRound.status === "revealed") {
+    return res.json({ success: true, round: activeRound });
+  }
+
+  closeActiveRound(false);
+  // Community results remain available until the host opens another round or archives them.
+  if (activeRound.endsAt) return res.json({ success: true, round: activeRound });
 
   // Reveal, then return to idle. The host can also clear it early.
   const holdMs = Number(req.body?.revealMs);
@@ -1402,6 +1443,7 @@ app.delete("/api/round", requireHost, (_req, res) => {
   if (!activeRound) {
     return res.json({ success: true, round: null });
   }
+  if (activeRound.status === "open") return res.status(409).json({ error: "Close the round before archiving it." });
   archiveActiveRound();
   res.json({ success: true, round: null, history: roundHistory.slice(0, 10) });
 });
@@ -2202,4 +2244,6 @@ async function startServer() {
   });
 }
 
+expireRoundIfNeeded();
+setInterval(expireRoundIfNeeded, 1000).unref();
 startServer();

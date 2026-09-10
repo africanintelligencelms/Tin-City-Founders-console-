@@ -191,6 +191,8 @@ export interface VotingRound {
   maxSelections: number;
   ballotsCast: number;
   openedAt: number;
+  durationHours?: number;
+  endsAt?: string;
   closedAt?: number;
   // Populated only once the host closes the round.
   results?: RoundResultEntry[];

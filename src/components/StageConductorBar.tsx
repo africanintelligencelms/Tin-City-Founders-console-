@@ -8,6 +8,7 @@ import {
   RoomPhase, RoomSessionState, ToastNotification, RoundKind,
   PlateauProblem, CategoryInfo, TrusteeCandidate, VotingRound, RoundOption
 } from '../types';
+import { RoundDeadline } from './RoundDeadline';
 import { sounds } from '../utils/soundEffects';
 
 interface StageConductorBarProps {
@@ -19,7 +20,8 @@ interface StageConductorBarProps {
   onOpenQRModal?: () => void;
   isCompact?: boolean;
   // Round lifecycle — the host picks the ballot type each round.
-  onOpenRound?: (opts: { kind: RoundKind; title: string; maxSelections: number; optionIds?: string[] }) => Promise<void>;
+  onOpenRound?: (opts: { kind: RoundKind; title: string; maxSelections: number; optionIds?: string[]; durationHours?: number }) => Promise<void>;
+  onExtendRound?: () => Promise<void>;
   onCloseRound?: () => Promise<void>;
   onClearRound?: () => Promise<void>;
   // Pulls the whole room down as a JSON file the host can restore from.
@@ -111,6 +113,7 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
   isCompact = false,
   onOpenRound,
   onCloseRound,
+  onExtendRound,
   onClearRound,
   onDownloadBackup,
   problems = [],
@@ -127,6 +130,8 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
   const [roundKind, setRoundKind] = useState<RoundKind>('problem');
+  const [roundDuration, setRoundDuration] = useState('48');
+  const [customHours, setCustomHours] = useState(120);
   const [roundTitle, setRoundTitle] = useState<string>('');
   const [roundPicks, setRoundPicks] = useState<number>(1);
   // Stored as EXCLUSIONS, not selections: an empty set means "everything is on
@@ -260,6 +265,7 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
         kind: roundKind,
         title: roundTitle.trim() || `Live ${kindLabel} vote`,
         maxSelections: Math.max(1, roundPicks),
+        ...(roundDuration === 'manual' ? {} : { durationHours: roundDuration === 'custom' ? customHours : Number(roundDuration) }),
         // Omitting the field is how the server reads "the whole pool".
         ...(isEverything ? {} : { optionIds: selectedOptionIds })
       })
@@ -526,6 +532,7 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
             </div>
 
             {/* ---------------- Voting Round Lifecycle ---------------- */}
+            {activeRound?.endsAt && <div className="p-3 text-white"><RoundDeadline round={activeRound} />{activeRound.status === 'open' && onExtendRound && <button disabled={isRoundBusy} onClick={() => runRoundAction(onExtendRound)} className="mt-2 px-3 py-2 border border-emerald-500 rounded-xl text-xs">Extend deadline by 24 hours</button>}</div>}
             {(onOpenRound || onCloseRound) && (
               <div className="mt-4 pt-4 border-t border-emerald-800/40">
                 {!activeRound && (
@@ -557,6 +564,12 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
                         ))}
                       </div>
 
+                      <label className="text-xs text-white">Voting window
+                        <select aria-label="Voting window" value={roundDuration} onChange={e => setRoundDuration(e.target.value)} className="block rounded-xl bg-[#09251B] p-2 border border-emerald-700">
+                          <option value="24">24 hours</option><option value="48">48 hours</option><option value="72">3 days</option><option value="168">7 days</option><option value="custom">Custom hours</option><option value="manual">Manual close (mixer)</option>
+                        </select>
+                      </label>
+                      {roundDuration === 'custom' && <label className="text-xs text-white">Hours<input aria-label="Custom duration in hours" type="number" min="1" max="720" value={customHours} onChange={e => setCustomHours(Number(e.target.value))} className="block w-24 rounded-xl bg-[#09251B] p-2 border border-emerald-700" /></label>}
                       <input
                         type="text"
                         value={roundTitle}
@@ -730,7 +743,7 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
                         className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-display font-black transition cursor-pointer active:scale-95"
                       >
                         {isRoundBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Compass className="w-4 h-4" />}
-                        Back to Room
+                        {activeRound.endsAt ? 'Archive results' : 'Back to Room'}
                       </button>
                     </div>
 

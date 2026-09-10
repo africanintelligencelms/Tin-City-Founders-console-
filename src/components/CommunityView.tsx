@@ -4,6 +4,7 @@ import type { AttendeeProfile, CategoryInfo, PlateauProblem, VotingRound, MyRoun
 import { BrandLogo } from './BrandLogo';
 import { AttendeeDirectory } from './AttendeeDirectory';
 import { SeamlessProblemWizard } from './SeamlessProblemWizard';
+import { RoundDeadline } from './RoundDeadline';
 import { RoundTakeover } from './RoundTakeover';
 
 interface Props {
@@ -84,7 +85,7 @@ export function CommunityView(p: Props) {
       </section>
 
       {round && <section className="bg-white border border-[#0D4734]/30 rounded-2xl p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div><p className="text-xs font-bold uppercase text-[#0D4734]">{round.status === 'open' ? 'Community ballot · Open' : 'Latest ballot results'}</p><h2 className="font-bold text-lg">{round.title}</h2><p className="text-sm text-stone-600">{round.ballotsCast} ballots submitted</p></div>
+        <div><p className="text-xs font-bold uppercase text-[#0D4734]">{round.status === 'open' ? 'Community ballot · Open' : 'Latest ballot results'}</p><h2 className="font-bold text-lg">{round.title}</h2><p className="text-sm text-stone-600">{round.ballotsCast} ballots submitted</p><RoundDeadline round={round} /></div>
         <button className={`${button} flex items-center gap-2`} onClick={() => setView('ballot')}>{round.status === 'open' ? 'View ballot' : 'View results'}<ArrowRight size={16} /></button>
       </section>}
 

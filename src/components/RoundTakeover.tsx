@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Vote, CheckCircle2, Trophy, Radio, Loader2, Users, AlertCircle, RefreshCw } from 'lucide-react';
+import { RoundDeadline, useRoundExpired } from './RoundDeadline';
 import { VotingRound, MyRoundBallot } from '../types';
 
 interface RoundTakeoverProps {
@@ -29,6 +30,7 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
   syncStatus = 'connected',
   onReconnect
 }) => {
+  const { expired } = useRoundExpired(round);
   const [selections, setSelections] = useState<string[]>(myBallot.selections || []);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +55,7 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
   };
 
   const submit = async () => {
+    if (expired) { setError('Voting has ended. Refresh to see the final results.'); onReconnect?.(); return; }
     if (!selections.length) {
       setError('Pick at least one option to submit your ballot.');
       return;
@@ -108,6 +111,7 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
     return (
       <div className={`${embedded ? 'rounded-3xl' : 'min-h-screen'} bg-[#071912] text-[#FAF6EE] px-4 py-6`}>
         <div className="max-w-lg mx-auto">
+        <RoundDeadline round={round} />
           <div className="flex items-center justify-between gap-2 mb-2">
             <div className="flex items-center gap-2 text-amber-300 text-xs font-mono font-bold uppercase tracking-wider">
               <Trophy size={14} />
@@ -176,6 +180,7 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
   return (
     <div className={`${embedded ? 'rounded-3xl' : 'min-h-screen pb-32'} bg-[#071912] text-[#FAF6EE] px-4 py-6`}>
       <div className="max-w-lg mx-auto">
+        <RoundDeadline round={round} />
         <div className="flex items-center justify-between gap-2 mb-2">
           <div className="flex items-center gap-2 text-emerald-300 text-xs font-mono font-bold uppercase tracking-wider">
             <span className="relative flex h-2 w-2">
@@ -208,12 +213,12 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
         <div className="space-y-2">
           {round.options.map(option => {
             const picked = selections.includes(option.id);
-            const disabled = !picked && atCap && isMulti;
+            const disabled = expired || (!picked && atCap && isMulti);
             return (
               <button
                 key={option.id}
                 type="button"
-                onClick={() => toggle(option.id)}
+                onClick={() => { if (!expired) toggle(option.id); }}
                 disabled={disabled}
                 aria-pressed={picked}
                 className={`w-full text-left rounded-xl border p-3.5 transition active:scale-[0.99] ${
@@ -255,10 +260,11 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
       {/* Sticky submit bar */}
       <div className={`${embedded ? 'mt-6 rounded-xl' : 'fixed bottom-0 inset-x-0'} bg-[#071912]/95 backdrop-blur border-t border-white/10 px-4 py-3`}>
         <div className="max-w-lg mx-auto">
+        <RoundDeadline round={round} />
           <button
             type="button"
             onClick={submit}
-            disabled={isSubmitting || !selections.length}
+            disabled={expired || isSubmitting || !selections.length}
             className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:bg-white/10 disabled:text-white/40 text-[#071912] font-display font-bold py-3.5 transition active:scale-[0.99] disabled:cursor-not-allowed cursor-pointer"
           >
             {isSubmitting ? (

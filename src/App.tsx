@@ -254,7 +254,11 @@ export default function App() {
     setRoomSessionState(prev => ({ ...prev, activeRound: round ?? null }));
   };
 
-  const handleOpenRound = async (opts: { kind: RoundKind; title: string; maxSelections: number; optionIds?: string[] }) => {
+  const handleExtendRound = async () => {
+    const data = await postRound('/api/round/extend', 'POST', { roundId: roomSessionState.activeRound?.id });
+    applyRound(data.round);
+  };
+  const handleOpenRound = async (opts: { kind: RoundKind; title: string; maxSelections: number; optionIds?: string[]; durationHours?: number }) => {
     const data = await postRound('/api/round/open', 'POST', opts);
     applyRound(data.round);
     // A fresh round means this device has not voted yet.
@@ -495,6 +499,9 @@ export default function App() {
 
         // ---- Voting round lifecycle events ----
 
+        eventSource.addEventListener('ROUND_UPDATED', (e: MessageEvent) => {
+          try { applyRound(JSON.parse(e.data).round); } catch (err) { console.error(err); }
+        });
         eventSource.addEventListener('ROUND_OPENED', (e: MessageEvent) => {
           if (isCancelled) return;
           try {
@@ -1233,6 +1240,7 @@ export default function App() {
               isCompact={true}
               onNotify={addToast}
               onOpenRound={handleOpenRound}
+              onExtendRound={handleExtendRound}
               onCloseRound={handleCloseRound}
               onClearRound={handleClearRound}
               onDownloadBackup={handleDownloadBackup}
