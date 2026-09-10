@@ -1,3 +1,4 @@
+import { SuggestSector } from './SuggestSector';
 import React, { useState, useEffect } from 'react';
 import { 
   X, 
@@ -132,7 +133,14 @@ export const SeamlessProblemWizard: React.FC<SeamlessProblemWizardProps> = ({
   categories
 }) => {
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
-  const [category, setCategory] = useState<string>('Agro-Tech & Cold Chain');
+  const [category, setCategory] = useState<string>('');
+  const sectorOptions = categories.map(c => {
+    const preset = SECTOR_OPTIONS.find(s => s.name === c.name);
+    return { ...(preset || { icon: Layers, color: '#0D4734', accent: '#E5A93C', template: { title: '', desc: '' } }), name: c.name, tagline: c.description };
+  });
+  useEffect(() => {
+    if (!categories.some(c => c.name === category)) setCategory(categories[0]?.name || '');
+  }, [categories, category]);
   const [title, setTitle] = useState<string>('');
   const [description, setDescription] = useState<string>('');
   const [author, setAuthor] = useState<string>('');
@@ -218,7 +226,7 @@ export const SeamlessProblemWizard: React.FC<SeamlessProblemWizardProps> = ({
     }
   };
 
-  const selectedSectorObj = SECTOR_OPTIONS.find(s => s.name === category) || SECTOR_OPTIONS[0];
+  const selectedSectorObj = sectorOptions.find(s => s.name === category) || SECTOR_OPTIONS[0];
   const IconComponent = selectedSectorObj.icon;
 
   return (
@@ -321,13 +329,14 @@ export const SeamlessProblemWizard: React.FC<SeamlessProblemWizardProps> = ({
                     </div>
                   </div>
 
+                  <SuggestSector />
                   {/* Visual Sector Cards Grid */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                    {SECTOR_OPTIONS.map((sec) => {
+                    {sectorOptions.map((sec) => {
                       const isSelected = category === sec.name;
                       const Icon = sec.icon;
                       const catData = categories.find(c => c.name === sec.name);
-                      const voteCount = catData ? catData.upvotes : 25;
+                      const voteCount = catData?.upvotes || 0;
 
                       return (
                         <div
@@ -368,7 +377,7 @@ export const SeamlessProblemWizard: React.FC<SeamlessProblemWizardProps> = ({
                           </div>
 
                           {/* Quick Template Pill */}
-                          <button
+                          {sec.template.title && <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -381,7 +390,7 @@ export const SeamlessProblemWizard: React.FC<SeamlessProblemWizardProps> = ({
                               <Wand2 className="w-3 h-3 text-[#E5A93C]" /> Use Quick Theme: "{sec.template.title.slice(0, 24)}..."
                             </span>
                             <ArrowRight className="w-3 h-3 flex-none" />
-                          </button>
+                          </button>}
                         </div>
                       );
                     })}

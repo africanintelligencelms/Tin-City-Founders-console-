@@ -516,6 +516,7 @@ export default function App() {
           if (isCancelled) return;
           try { const { round } = JSON.parse(e.data); setLastRound(prev => prev?.id === round.id ? round : prev); } catch (err) { console.error(err); }
         });
+        eventSource.addEventListener('SECTORS_UPDATED', () => { if (!isCancelled) void refreshMyVotes(); });
         eventSource.addEventListener('ROUND_UPDATED', (e: MessageEvent) => {
           try { applyRound(JSON.parse(e.data).round); } catch (err) { console.error(err); }
         });
@@ -1096,28 +1097,24 @@ export default function App() {
     }));
   };
 
+  const handleSectorRequest = async (path: string, method: string, body?: unknown) => {
+    const data = await postRound(path, method, body);
+    if (data.categories) setLiveCategories(data.categories);
+    if (data.problems) setProblems(data.problems);
+    if (method !== 'GET') await refreshMyVotes();
+    return data;
+  };
+
+  const handleSaveSector = async (original: string | null, name: string, description: string) => {
+    const data = await postRound(original === null ? '/api/categories' : `/api/categories/${encodeURIComponent(original)}`, original === null ? 'POST' : 'PATCH', { name, description });
+    setLiveCategories(data.categories); setProblems(data.problems);
+    await refreshMyVotes();
+  };
+
   // Update problem's category assignment
   const handleUpdateProblemCategory = async (problemId: string, newCategory: string) => {
-    try {
-      const res = await hostFetch(`/api/problems/${problemId}/category`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category: newCategory })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.problems) {
-          setProblems(data.problems);
-          return;
-        }
-      }
-    } catch (err) {
-      console.error('Failed to update category on server, updating locally:', err);
-    }
-
-    // Fallback local update
-    setProblems(prev => prev.map(p => p.id === problemId ? { ...p, category: newCategory } : p));
+    const data = await postRound(`/api/problems/${encodeURIComponent(problemId)}/category`, 'POST', { category: newCategory });
+    setProblems(data.problems);
   };
 
   // Community actions record ongoing support without altering a formal round ballot.
@@ -1269,6 +1266,8 @@ export default function App() {
               connectedClientsCount={attendees.length}
               isCompact={true}
               onNotify={addToast}
+              onSectorRequest={handleSectorRequest}
+              onSaveSector={handleSaveSector}
               onOpenRound={handleOpenRound}
               onExtendRound={handleExtendRound}
               onCloseRound={handleCloseRound}

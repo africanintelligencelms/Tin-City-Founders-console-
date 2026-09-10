@@ -1,3 +1,5 @@
+import type { SectorRequest } from './SectorReview';
+import { SectorManager } from './SectorManager';
 import { WhatsAppBroadcastDeck } from './WhatsAppBroadcastDeck';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
@@ -31,6 +33,8 @@ interface StageConductorBarProps {
   // instead of everything. Mirrors buildRoundOptions() on the server.
   problems?: PlateauProblem[];
   categories?: CategoryInfo[];
+  onSectorRequest?: SectorRequest;
+  onSaveSector?: (original: string | null, name: string, description: string) => Promise<void>;
   trusteeCandidates?: TrusteeCandidate[];
   // Most recently archived round — powers the "Top 3 from last round" shortcut.
   lastRound?: VotingRound | null;
@@ -119,6 +123,8 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
   onDownloadBackup,
   problems = [],
   categories = [],
+  onSaveSector,
+  onSectorRequest,
   trusteeCandidates = [],
   lastRound = null,
   roundHistory = []
@@ -536,6 +542,7 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
 
             {/* ---------------- Voting Round Lifecycle ---------------- */}
             <a href="/?mode=community&view=history" className="inline-block m-3 px-4 py-2 rounded-xl border border-emerald-600 text-white text-sm font-bold">Past ballots · results and squads</a>
+            {onSaveSector && onSectorRequest && <SectorManager sectors={categories} onSave={onSaveSector} request={onSectorRequest} />}
             <WhatsAppBroadcastDeck rounds={[...(activeRound ? [activeRound] : []), ...roundHistory, ...(lastRound ? [lastRound] : [])].filter((r, i, all) => all.findIndex(x => x.id === r.id) === i)} />
             {activeRound?.endsAt && <div className="p-3 text-white"><RoundDeadline round={activeRound} />{activeRound.status === 'open' && onExtendRound && <button disabled={isRoundBusy} onClick={() => runRoundAction(onExtendRound)} className="mt-2 px-3 py-2 border border-emerald-500 rounded-xl text-xs">Extend deadline by 24 hours</button>}</div>}
             {(onOpenRound || onCloseRound) && (

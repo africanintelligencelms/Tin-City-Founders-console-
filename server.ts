@@ -552,6 +552,8 @@ let problems: ServerProblem[] = SEED_ROOM ? [...defaultProblems] : [];
 type ServerAttendee = (typeof defaultAttendees)[number] & { organization?: string; linkedin?: string };
 let attendees: ServerAttendee[] = SEED_ROOM ? [...defaultAttendees] : [];
 let memberContacts: Record<string, { phone: string; voterId: string }> = {};
+interface SectorSuggestion { id: string; name: string; description: string; memberId: string; submittedBy: string; createdAt: number; status: 'pending' | 'approved' | 'mapped' | 'dismissed'; resolvedSector?: string; }
+let sectorSuggestions: SectorSuggestion[] = [];
 let categoriesStore = SEED_ROOM ? { ...defaultCategoriesStore } : emptyCategoriesStore;
 let trusteeCandidates: ServerTrustee[] = SEED_ROOM ? [...defaultTrusteeCandidates] : [];
 
@@ -817,6 +819,7 @@ try {
     if (parsed.problems && Array.isArray(parsed.problems)) problems = parsed.problems;
     if (parsed.memberContacts && typeof parsed.memberContacts === "object") memberContacts = parsed.memberContacts;
     if (parsed.attendees && Array.isArray(parsed.attendees)) attendees = parsed.attendees;
+    if (Array.isArray(parsed.sectorSuggestions)) sectorSuggestions = parsed.sectorSuggestions;
     if (parsed.categoriesStore && typeof parsed.categoriesStore === "object") categoriesStore = parsed.categoriesStore;
     if (parsed.trusteeCandidates && Array.isArray(parsed.trusteeCandidates)) trusteeCandidates = parsed.trusteeCandidates;
     if (parsed.activityLogs && Array.isArray(parsed.activityLogs)) activityLogs = parsed.activityLogs;
@@ -868,6 +871,7 @@ function buildStateSnapshot() {
     problems,
     attendees,
     categoriesStore,
+    sectorSuggestions,
     trusteeCandidates,
     activityLogs,
     voteRecords,
@@ -1875,6 +1879,96 @@ app.get("/api/categories", (_req, res) => {
   res.json({ success: true, categories: result });
 });
 
+// Host-managed sectors. Ballot options are snapshots and retain their original names.
+const validSectorName = (value: unknown): value is string => typeof value === 'string' && !!value.trim() && value.trim().length <= 80 && !['__proto__', 'prototype', 'constructor', 'all'].includes(value.trim().toLowerCase());
+app.post('/api/categories', requireHost, (req, res) => {
+  const { name, description } = req.body || {};
+  if (!validSectorName(name) || typeof description !== 'string' || description.length > 1000) return res.status(400).json({ error: 'Enter a sector name (up to 80 characters) and description (up to 1000 characters).' });
+  const trimmed = name.trim();
+  if (Object.keys(categoriesStore).some(n => n.toLowerCase() === trimmed.toLowerCase())) return res.status(409).json({ error: 'A sector with this name already exists.' });
+  categoriesStore[trimmed] = { upvotes: 0, baseUpvotes: 0, description: description.trim(), iconName: 'FolderKanban' };
+  broadcastStateUpdate('sector_created', `Created sector: ${trimmed}`, 'Host', trimmed);
+  broadcastSSE('SECTORS_UPDATED', {});
+  res.status(201).json({ success: true, categories: serializeCategories(), problems });
+});
+app.patch('/api/categories/:name', requireHost, (req, res) => {
+  const original = req.params.name;
+  const { name, description } = req.body || {};
+  if (!Object.hasOwn(categoriesStore, original)) return res.status(404).json({ error: 'This sector no longer exists. Refresh the list.' });
+  if (!validSectorName(name) || typeof description !== 'string' || description.length > 1000) return res.status(400).json({ error: 'Enter a sector name (up to 80 characters) and description (up to 1000 characters).' });
+  const renamed = name.trim();
+  if (Object.keys(categoriesStore).some(n => n !== original && n.toLowerCase() === renamed.toLowerCase())) return res.status(409).json({ error: 'A sector with this name already exists.' });
+  const sector = categoriesStore[original];
+  sector.description = description.trim();
+  if (renamed !== original) {
+    delete categoriesStore[original]; categoriesStore[renamed] = sector;
+    for (const suggestion of sectorSuggestions) if (suggestion.resolvedSector === original) suggestion.resolvedSector = renamed;
+    for (const problem of problems) if (problem.category === original) problem.category = renamed;
+    for (const record of voteRecords) if (record.kind === 'category' && record.targetId === original) record.targetId = renamed;
+    rebuildCastVotes(); recomputeCounts();
+  }
+  broadcastStateUpdate('sector_updated', `Updated sector: ${original}${renamed !== original ? ` → ${renamed}` : ''}`, 'Host', renamed);
+  broadcastSSE('SECTORS_UPDATED', {});
+  res.json({ success: true, categories: serializeCategories(), problems });
+});
+
+app.delete('/api/categories/:name', requireHost, (req, res) => {
+  const name = req.params.name;
+  const replacement = req.body?.replacement;
+  if (!Object.hasOwn(categoriesStore, name)) return res.status(404).json({ error: 'Sector not found.' });
+  const linked = problems.filter(p => p.category === name);
+  if ((linked.length || replacement) && (typeof replacement !== 'string' || replacement === name || !Object.hasOwn(categoriesStore, replacement))) return res.status(400).json({ error: 'Choose another existing sector for the linked challenges.' });
+  for (const problem of linked) problem.category = replacement;
+  // An opinion about one sector must not become support for a different sector.
+  dropVotesForTarget('category', name);
+  delete categoriesStore[name];
+  for (const suggestion of sectorSuggestions) if (suggestion.resolvedSector === name) suggestion.resolvedSector = replacement || undefined;
+  recomputeCounts();
+  broadcastStateUpdate('sector_deleted', `Deleted sector: ${name}`, 'Host');
+  broadcastSSE('SECTORS_UPDATED', {});
+  res.json({ success: true, categories: serializeCategories(), problems });
+});
+
+app.post('/api/sector-suggestions', (req, res) => {
+  const memberId = Object.keys(memberContacts).find(id => memberContacts[id].voterId === req.voterId);
+  const member = attendees.find(a => a.id === memberId);
+  if (!member) return res.status(401).json({ error: 'Join or recover your community profile before suggesting a sector.' });
+  const { name, description } = req.body || {};
+  if (!validSectorName(name) || typeof description !== 'string' || description.length > 1000) return res.status(400).json({ error: 'Enter a sector name and a description of up to 1000 characters.' });
+  const trimmed = name.trim();
+  if (Object.keys(categoriesStore).some(n => n.toLowerCase() === trimmed.toLowerCase())) return res.status(409).json({ error: 'This sector already exists. Choose it from the list.' });
+  if (sectorSuggestions.some(s => s.status === 'pending' && s.name.toLowerCase() === trimmed.toLowerCase())) return res.status(409).json({ error: 'This sector has already been suggested and is awaiting host review.' });
+  sectorSuggestions.unshift({ id: crypto.randomUUID(), name: trimmed, description: description.trim(), memberId: member.id, submittedBy: member.name, createdAt: Date.now(), status: 'pending' });
+  persistState();
+  res.status(201).json({ success: true });
+});
+app.get('/api/sector-suggestions/mine', (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  const ids = Object.keys(memberContacts).filter(id => memberContacts[id].voterId === req.voterId);
+  res.json({ success: true, suggestions: sectorSuggestions.filter(s => ids.includes(s.memberId)).map(s => ({ id: s.id, name: s.name, status: s.status, resolvedSector: s.resolvedSector })) });
+});
+app.get('/api/sector-suggestions', requireHost, (_req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({ success: true, suggestions: sectorSuggestions.filter(s => s.status === 'pending') });
+});
+app.post('/api/sector-suggestions/:id/review', requireHost, (req, res) => {
+  const suggestion = sectorSuggestions.find(s => s.id === req.params.id);
+  if (!suggestion || suggestion.status !== 'pending') return res.status(409).json({ error: 'This suggestion has already been reviewed or is unavailable.' });
+  const { action, target } = req.body || {};
+  if (action === 'approve') {
+    if (Object.keys(categoriesStore).some(n => n.toLowerCase() === suggestion.name.toLowerCase())) return res.status(409).json({ error: 'That sector now exists. Map the suggestion to it instead.' });
+    categoriesStore[suggestion.name] = { description: suggestion.description, upvotes: 0, baseUpvotes: 0, iconName: 'FolderKanban' };
+    suggestion.status = 'approved'; suggestion.resolvedSector = suggestion.name;
+  } else if (action === 'map') {
+    if (typeof target !== 'string' || !Object.hasOwn(categoriesStore, target)) return res.status(400).json({ error: 'Choose an existing sector.' });
+    suggestion.status = 'mapped'; suggestion.resolvedSector = target;
+  } else if (action === 'dismiss') suggestion.status = 'dismissed';
+  else return res.status(400).json({ error: 'Choose approve, map or dismiss.' });
+  broadcastStateUpdate('sector_suggestion_reviewed', `Reviewed sector suggestion: ${suggestion.name}`, 'Host');
+  broadcastSSE('SECTORS_UPDATED', {});
+  res.json({ success: true, categories: serializeCategories(), problems, suggestions: sectorSuggestions.filter(s => s.status === 'pending') });
+});
+
 // Vote on a category
 function serializeCategories() {
   return Object.entries(categoriesStore).map(([catName, data]) => ({
@@ -1890,7 +1984,7 @@ app.post("/api/categories/:name/vote", (req, res) => {
   const { name } = req.params;
   const { increment } = req.body || {};
 
-  if (!categoriesStore[name]) {
+  if (!Object.hasOwn(categoriesStore, name)) {
     return res.status(404).json({ success: false, error: "Category not found" });
   }
 
@@ -1923,7 +2017,7 @@ app.post("/api/categories/:name/vote", (req, res) => {
 app.delete("/api/categories/:name/vote", (req, res) => {
   const { name } = req.params;
 
-  if (!categoriesStore[name]) {
+  if (!Object.hasOwn(categoriesStore, name)) {
     return res.status(404).json({ success: false, error: "Category not found" });
   }
 
@@ -1950,6 +2044,7 @@ app.post("/api/problems", (req, res) => {
     return res.status(400).json({ success: false, error: "Title, description and category are required" });
   }
 
+  if (typeof category !== 'string' || !Object.hasOwn(categoriesStore, category)) return res.status(400).json({ success: false, error: 'Choose an existing sector. Refresh the page if the sector was renamed.' });
   const authorName = submittedBy ? submittedBy.trim() : "Anonymous Founder";
   const isCommit = autoCommit === true;
   const isUpvote = autoUpvote !== false;
@@ -1977,15 +2072,6 @@ app.post("/api/problems", (req, res) => {
   if (isUpvote) recordVote("problem", newProb.id, req.voterId, authorName);
   if (isCommit) recordVote("squad", newProb.id, req.voterId, authorName);
 
-  // If category wasn't in store, create it
-  if (!categoriesStore[newProb.category]) {
-    categoriesStore[newProb.category] = {
-      upvotes: 1,
-      baseUpvotes: 1,
-      description: `Community reported challenges under ${newProb.category}.`,
-      iconName: "FolderKanban"
-    };
-  }
   recomputeCounts();
 
   broadcastStateUpdate("problem_created", `Submitted new problem: "${newProb.title}"`, authorName, newProb.category);
@@ -2003,20 +2089,8 @@ app.post("/api/problems/:id/category", requireHost, (req, res) => {
     return res.status(404).json({ success: false, error: "Problem not found" });
   }
 
-  if (!category || !category.trim()) {
-    return res.status(400).json({ success: false, error: "Category is required" });
-  }
-
-  problem.category = category.trim();
-
-  if (!categoriesStore[problem.category]) {
-    categoriesStore[problem.category] = {
-      upvotes: 1,
-      baseUpvotes: 1,
-      description: `Community reported challenges under ${problem.category}.`,
-      iconName: "FolderKanban"
-    };
-  }
+  if (typeof category !== 'string' || !Object.hasOwn(categoriesStore, category)) return res.status(400).json({ success: false, error: 'Choose an existing sector.' });
+  problem.category = category;
 
   broadcastStateUpdate("problem_recategorized", `Recategorized "${problem.title}" to ${problem.category}`, "Founder", problem.category);
   res.json({ success: true, problem, problems });

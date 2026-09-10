@@ -167,7 +167,8 @@ export const ProblemVoting: React.FC<ProblemVotingProps> = ({
   }, []);
 
   // Filter category dropdown list
-  const categoryFilterOptions = ['All', ...PREDEFINED_CATEGORIES];
+  const sectorNames = (liveCategories || categoriesList).map(c => c.name);
+  const categoryFilterOptions = ['All', ...sectorNames];
 
   // Category Icon Renderer
   const renderCategoryIcon = (categoryName: string, className: string = 'w-5 h-5') => {
@@ -302,8 +303,12 @@ export const ProblemVoting: React.FC<ProblemVotingProps> = ({
   };
 
   const handleAssignCategory = async (problemId: string, newCategoryName: string) => {
-    await onUpdateProblemCategory(problemId, newCategoryName);
-    setAssigningCategoryProblemId(null);
+    try {
+      await onUpdateProblemCategory(problemId, newCategoryName);
+      setAssigningCategoryProblemId(null);
+    } catch (error) {
+      onNotify?.({ type: 'info', title: 'Sector was not changed', message: error instanceof Error ? error.message : 'Please try again.', duration: 5000 });
+    }
   };
 
   // Filtering & Sorting problems
@@ -703,7 +708,7 @@ export const ProblemVoting: React.FC<ProblemVotingProps> = ({
                                 </button>
                               </div>
                               <div className="space-y-1">
-                                {PREDEFINED_CATEGORIES.map(catName => (
+                                {sectorNames.map(catName => (
                                   <button
                                     key={catName}
                                     type="button"

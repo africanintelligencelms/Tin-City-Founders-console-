@@ -1,3 +1,4 @@
+import { SuggestSector } from './SuggestSector';
 import { PastBallots } from './PastBallots';
 import { SquadJoin, SquadRoster } from './SquadJoin';
 import React, { useEffect, useState } from 'react';
@@ -137,6 +138,7 @@ export function CommunityView(p: Props) {
         </div>
         {!filtered.length && <div className="bg-white rounded-2xl border p-8 text-center"><h2 className="font-bold text-xl">{p.problems.length ? 'No matching challenges' : 'What should we build together?'}</h2><p className="mt-2 text-stone-600">{p.problems.length ? 'Try another search or sector.' : 'Share the first challenge for the community to explore.'}</p></div>}
       </>}
+      {view === 'sectors' && <SuggestSector />}
       {view === 'sectors' && <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">{p.categories.map(item => <article key={item.name} className="bg-white border-2 rounded-2xl p-5"><h2 className="text-xl font-bold">{item.name}</h2><p className="text-sm text-stone-600 my-4">{item.description}</p><button disabled={busy !== null} aria-pressed={p.myVotes.categories.includes(item.name)} className={button} onClick={() => act(item.name, () => p.onVoteCategory(item.name))}>{p.myVotes.categories.includes(item.name) ? 'Supported' : 'Support sector'} · {item.upvotes}</button></article>)}</div>}
       {view === 'trustees' && <><p className="text-sm text-stone-600 mb-4">Meet the nominated trustees. Support here is an endorsement; election ballots appear separately when open.</p><div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">{p.trustees.map(item => <article key={item.id} className="bg-white border-2 rounded-2xl p-5"><p className="text-xs">Seat {item.seatNumber}</p><h2 className="text-xl font-bold">{item.name}</h2><p>{item.titleOrOrg}</p><p className="text-sm text-stone-600 my-4">{item.bio}</p><button className={button} disabled={busy !== null} aria-pressed={p.myVotes.trustees.includes(item.id)} onClick={() => act(item.id, () => p.onVoteTrustee(item.id))}>{p.myVotes.trustees.includes(item.id) ? 'Endorsed' : 'Endorse'} · {item.votes}</button></article>)}</div>{!p.trustees.length && <p>No trustees have been nominated yet.</p>}</>}
     </main>
