@@ -549,7 +549,7 @@ const emptyCategoriesStore = Object.fromEntries(
 ) as typeof defaultCategoriesStore;
 
 let problems: ServerProblem[] = SEED_ROOM ? [...defaultProblems] : [];
-type ServerAttendee = (typeof defaultAttendees)[number] & { organization?: string; linkedin?: string };
+type ServerAttendee = (typeof defaultAttendees)[number] & { organization?: string; linkedin?: string; link?: string; stage?: string; listed?: boolean };
 let attendees: ServerAttendee[] = SEED_ROOM ? [...defaultAttendees] : [];
 let memberContacts: Record<string, { phone: string; voterId: string }> = {};
 interface SectorSuggestion { id: string; name: string; description: string; memberId: string; submittedBy: string; createdAt: number; status: 'pending' | 'approved' | 'mapped' | 'dismissed'; resolvedSector?: string; }
@@ -603,6 +603,26 @@ function rebuildCastVotes() {
 }
 
 // Returns the new record, or null if this voter already voted on this target.
+// A member's own link — Instagram, a website, anything. Kept separate from the
+// linkedin field, which is narrow because it renders as a LinkedIn badge. http
+// is allowed: plenty of small Jos businesses are not on TLS yet. Anything that
+// is not http(s) — javascript:, data: — fails the protocol check. Shared by the
+// check-in handler and the bulk import so a link cannot enter unvalidated
+// through the side door.
+function normalizeLink(value: string): string {
+  const input = value.trim();
+  if (!input) return "";
+  if (input.length > 300) throw new Error("Keep your link within 300 characters.");
+  try {
+    const url = new URL(/^https?:\/\//i.test(input) ? input : `https://${input}`);
+    if (!["http:", "https:"].includes(url.protocol) || !url.hostname.includes(".") || url.username || url.password || url.port) throw new Error();
+    url.search = ""; url.hash = "";
+    return url.toString();
+  } catch {
+    throw new Error("Use a full link such as https://yoursite.com or instagram.com/yourhandle.");
+  }
+}
+
 function recordVote(kind: VoteKind, targetId: string, voterId: string, voterName?: string): VoteRecord | null {
   const key = voteKey(kind, targetId, voterId);
   if (castVotes.has(key)) return null;
@@ -1174,6 +1194,89 @@ app.get("/api/admin/state", requireHost, (_req, res) => {
 // The trustee list WITH phoneOrContact, for the console only. The public
 // payloads strip contacts (see publicTrustee), so this is how the host reads
 // back a number they need to ring after the room empties.
+// ----------------- BULK MEMBER IMPORT -----------------
+
+// Loading a directory export (a sign-up form's responses, say) as members.
+//
+// This cannot go through POST /api/attendees. That route stamps the CALLER's
+// voter id onto every record it touches, so one import session would leave all
+// imported members sharing a single identity: /api/profile/recover hands each
+// of them the same cookie, and recordVote() dedupes on
+// voteKey(kind, targetId, voterId) — meaning the first member to vote consumes
+// the vote for everyone and the rest are silently dropped.
+//
+// So each row gets a FRESH voter id that no browser holds. Nobody can act as
+// that member until they recover the profile with their own number, and the
+// row is not claimable by a stranger the way an ownerless row is.
+app.post("/api/admin/import-members", requireHost, (req, res) => {
+  const rows = req.body?.members;
+  if (!Array.isArray(rows)) return res.status(400).json({ error: "Send { members: [...] }." });
+  if (rows.length > 500) return res.status(400).json({ error: "Import at most 500 members at a time." });
+
+  const results: { row: number; name: string; action: string; reason?: string }[] = [];
+  let created = 0, merged = 0, skipped = 0;
+
+  rows.forEach((row: any, index: number) => {
+    const name = typeof row?.name === "string" ? row.name.trim() : "";
+    if (!name) { skipped++; results.push({ row: index, name: "", action: "skipped", reason: "no name" }); return; }
+
+    let phone = "";
+    if (row.whatsapp !== undefined && String(row.whatsapp).trim() !== "") {
+      try { phone = normalizePhone(String(row.whatsapp)); }
+      catch (error) { skipped++; results.push({ row: index, name, action: "skipped", reason: (error as Error).message }); return; }
+    }
+
+    // A number already in the room is the same person submitting twice. Merge
+    // onto the existing record rather than creating a second one, and keep the
+    // voter id that record already has so any votes cast under it survive.
+    let link = "";
+    if (row.link !== undefined && String(row.link).trim() !== "") {
+      try { link = normalizeLink(String(row.link)); }
+      catch (error) { skipped++; results.push({ row: index, name, action: "skipped", reason: (error as Error).message }); return; }
+    }
+
+    const existingId = phone ? Object.keys(memberContacts).find(id => memberContacts[id].phone === phone) : undefined;
+    const attendeeId = existingId || `att-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
+    const existingIndex = attendees.findIndex(a => a.id === attendeeId);
+    const existing = existingIndex >= 0 ? attendees[existingIndex] : undefined;
+    const text = (value: unknown, previous: string | undefined) =>
+      typeof value === "string" && value.trim() ? value.trim() : (previous ?? "");
+
+    const record = {
+      id: attendeeId,
+      name,
+      title: text(row.title, existing?.title),
+      organization: text(row.organization, existing?.organization),
+      linkedin: existing?.linkedin || "",
+      link: link || existing?.link || "",
+      stage: text(row.stage, existing?.stage),
+      listed: typeof row.listed === "boolean" ? row.listed : (existing?.listed ?? true),
+      tags: Array.isArray(row.tags)
+        ? row.tags.filter((t: unknown): t is string => typeof t === "string" && t.trim().length > 0).map((t: string) => t.trim())
+        : (existing?.tags ?? []),
+      bio: text(row.bio, existing?.bio),
+      giveAsk: text(row.giveAsk, existing?.giveAsk),
+      location: text(row.location, existing?.location),
+      avatarColor: existing?.avatarColor || "#0D4734",
+      checkedInAt: typeof row.checkedInAt === "string" && !Number.isNaN(Date.parse(row.checkedInAt))
+        ? new Date(row.checkedInAt).toISOString()
+        : (existing?.checkedInAt || new Date().toISOString())
+    };
+
+    if (existingIndex >= 0) { attendees[existingIndex] = record; merged++; results.push({ row: index, name, action: "merged" }); }
+    else { attendees.unshift(record); created++; results.push({ row: index, name, action: "created" }); }
+
+    memberContacts[attendeeId] = {
+      phone,
+      voterId: memberContacts[attendeeId]?.voterId || crypto.randomUUID().replace(/-/g, "")
+    };
+  });
+
+  persistState();
+  broadcastStateUpdate("attendee_checkin", `${created} member${created === 1 ? "" : "s"} added to the directory`);
+  res.json({ success: true, created, merged, skipped, total: attendees.length, results });
+});
+
 app.get("/api/admin/trustees", requireHost, (_req, res) => {
   res.json({ success: true, candidates: trusteeCandidates });
 });
@@ -1764,7 +1867,7 @@ app.post('/api/profile/signout', (req, res) => {
 
 // Check-in or update attendee profile
 app.post(["/api/attendees", "/api/attendees/checkin"], (req, res) => {
-  const { id, name, title, tags, bio, giveAsk, location, avatarColor, whatsapp, organization, linkedin } = req.body;
+  const { id, name, title, tags, bio, giveAsk, location, avatarColor, whatsapp, organization, linkedin, link, stage, listed } = req.body;
   if (typeof name !== "string" || !name.trim()) {
     return res.status(400).json({ success: false, error: "Name is required for check-in" });
   }
@@ -1807,6 +1910,18 @@ app.post(["/api/attendees", "/api/attendees/checkin"], (req, res) => {
       } catch { return res.status(400).json({ error: 'Use a LinkedIn profile URL such as https://www.linkedin.com/in/your-name.' }); }
     }
   }
+  // The member's own link — Instagram, a website, anything. linkedin above stays
+  // narrow because it renders as a LinkedIn badge; this one is the general case.
+  // http is allowed: plenty of small Jos businesses are not on TLS yet. Anything
+  // that is not http(s) — javascript:, data: — fails the protocol check.
+  let linkUrl = existing?.link || '';
+  if (link !== undefined) {
+    if (typeof link !== 'string') return res.status(400).json({ error: 'Enter a link, or leave it blank.' });
+    try { linkUrl = normalizeLink(link); }
+    catch (error) { return res.status(400).json({ error: (error as Error).message }); }
+  }
+  if (stage !== undefined && (typeof stage !== 'string' || stage.length > 60)) return res.status(400).json({ error: 'Keep your stage within 60 characters.' });
+  if (listed !== undefined && typeof listed !== 'boolean') return res.status(400).json({ error: 'Listing preference must be true or false.' });
   if (avatarColor !== undefined && (typeof avatarColor !== 'string' || !/^#[0-9a-f]{6}$/i.test(avatarColor))) return res.status(400).json({ error: 'Choose a valid avatar colour.' });
 
   const newAttendee = {
@@ -1821,6 +1936,9 @@ app.post(["/api/attendees", "/api/attendees/checkin"], (req, res) => {
     bio: text(bio, existing?.bio),
     giveAsk: text(giveAsk, existing?.giveAsk),
     location: text(location, existing?.location),
+    link: linkUrl,
+    stage: text(stage, existing?.stage),
+    listed: typeof listed === 'boolean' ? listed : (existing?.listed ?? true),
     avatarColor: avatarColor || existing?.avatarColor || "#0D4734",
     checkedInAt: existing ? existing.checkedInAt : new Date().toISOString()
   };

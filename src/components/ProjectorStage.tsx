@@ -40,7 +40,7 @@ import {
 import jsQR from 'jsqr';
 import { PlateauProblem, AttendeeProfile, NavigationTab, TrusteeCandidate, RoomSessionState } from '../types';
 import { BrandLogo } from './BrandLogo';
-import { TRUSTEE_SEATS, INITIAL_TRUSTEE_CANDIDATES } from '../data/trusteeSeatsData';
+import { TRUSTEE_SEATS } from '../data/trusteeSeatsData';
 import { StageConductorBar } from './StageConductorBar';
 
 interface ProjectorStageProps {
@@ -141,15 +141,15 @@ export const ProjectorStage: React.FC<ProjectorStageProps> = ({
   // Trustee Candidates from storage or defaults
   const [trusteeCandidates, setTrusteeCandidates] = useState<TrusteeCandidate[]>(() => {
     try {
-      const saved = localStorage.getItem('tcf_trustee_candidates_v1');
+      const saved = localStorage.getItem('tcf_trustee_candidates_v2');
       if (saved) return JSON.parse(saved);
     } catch (e) {}
-    return INITIAL_TRUSTEE_CANDIDATES;
+    return [];
   });
 
   // Live server snapshot (via SSE in App) beats the local cache
   useEffect(() => {
-    if (liveTrusteeCandidates && liveTrusteeCandidates.length > 0) {
+    if (liveTrusteeCandidates) {
       setTrusteeCandidates(liveTrusteeCandidates);
     }
   }, [liveTrusteeCandidates]);

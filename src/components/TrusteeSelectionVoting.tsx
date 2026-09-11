@@ -35,7 +35,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { TrusteeSeatDefinition, TrusteeCandidate, TrusteeTier, AttendeeProfile, MyVotes, ToastNotification } from '../types';
-import { TRUSTEE_SEATS, INITIAL_TRUSTEE_CANDIDATES } from '../data/trusteeSeatsData';
+import { TRUSTEE_SEATS } from '../data/trusteeSeatsData';
 import { useVotingAnimation } from './VotingParticleManager';
 import { sounds } from '../utils/soundEffects';
 import { hostFetch } from '../utils/hostKey';
@@ -63,12 +63,17 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
   const { triggerVoteAnimation } = useVotingAnimation();
 
   // Candidates state with local persistence
+  // No invented fallback. An empty board is a real state — before the first
+  // nomination, and whenever the host has cleared the seats — and showing
+  // fictional founders there put twelve made-up names and phone numbers on the
+  // admin screen. The cache key is _v2 so devices holding the old fake list
+  // discard it on first load.
   const [candidates, setCandidates] = useState<TrusteeCandidate[]>(() => {
     try {
-      const saved = localStorage.getItem('tcf_trustee_candidates_v1');
+      const saved = localStorage.getItem('tcf_trustee_candidates_v2');
       if (saved) return JSON.parse(saved);
     } catch (e) {}
-    return INITIAL_TRUSTEE_CANDIDATES;
+    return [];
   });
 
   // User Voted Candidate IDs with local persistence
@@ -109,7 +114,7 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
   // Persist to localStorage
   useEffect(() => {
     try {
-      localStorage.setItem('tcf_trustee_candidates_v1', JSON.stringify(candidates));
+      localStorage.setItem('tcf_trustee_candidates_v2', JSON.stringify(candidates));
     } catch (e) {}
   }, [candidates]);
 
@@ -121,7 +126,9 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
 
   // Server truth (via SSE in App) beats the local cache
   useEffect(() => {
-    if (liveCandidates && liveCandidates.length > 0) setCandidates(liveCandidates);
+    // undefined means the snapshot has not arrived; [] means it arrived and the
+    // board is genuinely empty. Only the first is a reason to keep local state.
+    if (liveCandidates) setCandidates(liveCandidates);
   }, [liveCandidates]);
 
   useEffect(() => {

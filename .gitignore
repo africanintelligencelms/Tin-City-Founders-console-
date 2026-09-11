@@ -7,3 +7,6 @@ coverage/
 .env*
 !.env.example
 .data/
+
+# Generated import payloads hold real contact details.
+import/
