@@ -77,80 +77,46 @@ multiple instances would disagree.
 
 ## Update from main during a maintenance window
 
-Merge the intended PR on GitHub first. The script below updates only this
+Merge the intended PR on GitHub first. The script updates only this
 checkout from its existing `origin/main`, using its existing authentication.
 It does not merge PRs or change GitHub accounts.
 
-Save the following as `/root/tincity-deploy.sh` if you want a repeatable helper.
-Read it before running it. Replace any earlier helper that still targets the
-former app directory; do not run that old helper after the move.
-The backup directory is dedicated to Tin City and outside its checkout.
+The script is `scripts/deploy.sh` in this repository, so it arrives with the
+code it deploys and there is only one copy to keep correct. Read it before
+running it. It does not need to be installed anywhere:
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-APP=/root/apps/tincity
-BACKUPS=/root/tincity-backups
-cd "$APP"
-
-[ "$(git rev-parse --show-toplevel)" = "$APP" ] || { echo 'Wrong repository directory'; exit 1; }
-[ "$(git branch --show-current)" = main ] || { echo 'Expected main; inspect the checkout first'; exit 1; }
-git diff --quiet && git diff --cached --quiet || { echo 'Tracked changes need review'; exit 1; }
-REMOTE=$(git remote get-url origin)
-case "$REMOTE" in
-  */africanintelligencelms/Tin-City-Founders-console-|*/africanintelligencelms/Tin-City-Founders-console-.git|*:africanintelligencelms/Tin-City-Founders-console-|*:africanintelligencelms/Tin-City-Founders-console-.git) ;;
-  *) echo 'Unexpected origin repository; preserve credentials and inspect it'; exit 1 ;;
-esac
-
-# Read PM2 metadata without printing its environment or secrets.
-pm2 jlist | node -e '
-let input = "";
-process.stdin.on("data", chunk => input += chunk);
-process.stdin.on("end", () => {
-  const matches = JSON.parse(input).filter(p => p.name === "tincity");
-  const env = matches[0]?.pm2_env;
-  if (matches.length !== 1 || env.pm_cwd !== "/root/apps/tincity" ||
-      env.pm_exec_path !== "/root/apps/tincity/dist/server.cjs" || env.status !== "online") {
-    console.error("Expected one online tincity process at /root/apps/tincity; inspect PM2 first");
-    process.exit(1);
-  }
-});'
-
-[ -s "$APP/.data/room_state.json" ] || { echo 'Existing room state missing; stop and investigate'; exit 1; }
-git fetch origin main
-git merge-base --is-ancestor HEAD origin/main || { echo 'Local branch has diverged; resolve before deploying'; exit 1; }
-PREVIOUS=$(git rev-parse HEAD)
-STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-umask 077
-mkdir -p "$BACKUPS"
-chmod 700 "$BACKUPS"
-
-# Stop just this application so no votes or profiles change during the backup.
-# On failure, leave it stopped for inspection; do not restart a partial build.
-pm2 stop tincity
-trap 'echo "Deployment failed. Tin City remains stopped. Follow the rollback section using the saved commit and backup."' ERR
-cp -p "$APP/.data/room_state.json" "$BACKUPS/room-state-$STAMP.json"
-chmod 600 "$BACKUPS/room-state-$STAMP.json"
-printf '%s\n' "$PREVIOUS" > "$BACKUPS/commit-$STAMP.txt"
-echo "Backup: $BACKUPS/room-state-$STAMP.json; previous commit: $PREVIOUS"
-
-git merge --ff-only origin/main
-# Keep the tracked lockfile. If installation fails, stop instead of silently
-# deleting it and deploying a different dependency set.
-npm ci --include=dev
-npm run lint
-npm run build
-test -s "$APP/dist/index.html"
-test -s "$APP/dist/server.cjs"
-# Reuse the saved PM2 environment, including this app's assigned port and keys.
-pm2 restart tincity
-trap - ERR
-pm2 describe tincity
-curl --fail --silent --show-error --retry 5 --retry-delay 2 --retry-connrefused \
-  https://console.tincityfounders.com/api/host/verify
-printf '\nDeployed commit: '
-git rev-parse --short HEAD
+bash /root/apps/tincity/scripts/deploy.sh
 ```
+
+It refuses to run rather than guess, and every refusal below has cost a real
+deployment at least once: a checkout that is not this repository, not on `main`,
+has uncommitted tracked changes, points at an unexpected origin, has diverged
+from `origin/main`, has no `.data/room_state.json`, or whose PM2 process is not
+a single online `tincity` running from this directory. `process.cwd()` decides
+both where the room persists and whether `dist/` is served at all, so a process
+running from the wrong directory reports healthy and serves nothing.
+
+If the checkout is already at `origin/main` it says so and exits without
+stopping anything — a no-op deploy should not take the site down for a rebuild.
+
+Otherwise it stops only `tincity`, copies the room state and the previous commit
+into `/root/tincity-backups`, fast-forwards, runs `npm ci --include=dev`, the
+typecheck and the build, restarts, and waits on a health check. If any step
+fails the app is left stopped for inspection rather than restarted on a partial
+build; follow the rollback section below using the saved commit and backup.
+
+`APP`, `BACKUPS`, `PM2_APP` and `HEALTHCHECK` can be overridden in the
+environment; `tests/deploy-script.mjs` uses that to exercise the guards against
+throwaway checkouts.
+
+The script re-executes itself from a private copy before touching git. It lives
+inside the repository it updates, and bash reads a script incrementally from
+disk — without the copy, a merge that rewrote the file mid-run would leave bash
+reading the new file from its old byte offset.
+
+Delete any older `/root/tincity-deploy.sh`: it is a separate copy that will
+drift, and an early version targeted the pre-move `/apps/tincity`.
 
 The final host check should report `ok: false` without a host key. A successful
 HTTP response alone does not prove the host gate is enabled. Confirm the homepage
