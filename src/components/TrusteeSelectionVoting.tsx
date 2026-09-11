@@ -96,6 +96,9 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
   const [editingCandidate, setEditingCandidate] = useState<TrusteeCandidate | null>(null);
 
   // Form state for nomination / editing
+  // What the host has typed into the nominee search. The directory is 59 people
+  // and growing, so the picker searches it rather than showing a fixed handful.
+  const [nomineeQuery, setNomineeQuery] = useState('');
   const [formName, setFormName] = useState('');
   const [formTitle, setFormTitle] = useState('');
   const [formBio, setFormBio] = useState('');
@@ -345,6 +348,7 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
   // Open Nominate Modal for specific seat
   const handleOpenNominate = (seatNumber: number, existingCand?: TrusteeCandidate) => {
     setNominateForSeatNumber(seatNumber);
+    setNomineeQuery('');   // a stale search from the last seat is only confusing
     if (existingCand) {
       setEditingCandidate(existingCand);
       setFormName(existingCand.name);
@@ -474,10 +478,16 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
 
   // Quick Autocomplete from Room Attendees
   const handleSelectAttendeeNominee = (att: AttendeeProfile) => {
+    // Only what the member actually wrote. This used to default the title to
+    // "Tech Founder / Operator", build a bio from a template, and put their town
+    // in the contact field — inventing a record for a real person, and a bio
+    // reading "building in Jos with ." when they had no tags. Blank stays blank;
+    // the host fills the rest in.
     setFormName(att.name);
-    setFormTitle(att.title || 'Tech Founder / Operator');
-    setFormBio(att.bio || `${att.name} is an active founder building in Jos with ${att.tags?.join(', ')}.`);
-    setFormContact(att.location ? `Jos (${att.location})` : '');
+    setFormTitle(att.organization || att.title || '');
+    setFormBio(att.bio || '');
+    setFormContact('');
+    setNomineeQuery('');
     sounds.playTapSound();
   };
 
@@ -1164,21 +1174,58 @@ export const TrusteeSelectionVoting: React.FC<TrusteeSelectionVotingProps> = ({
             {/* Quick Pick from Checked-in Attendees */}
             {attendees.length > 0 && !editingCandidate && (
               <div className="bg-[#EBF3EF] border-b border-[#0D4734]/20 p-3.5">
-                <span className="text-[11px] font-display font-black text-[#0D4734] block mb-2">
-                  ⚡ Quick Nominate from Verified Attendees in the Room:
-                </span>
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-                  {attendees.slice(0, 8).map(att => (
-                    <button
-                      key={att.id}
-                      type="button"
-                      onClick={() => handleSelectAttendeeNominee(att)}
-                      className="px-2.5 py-1 bg-white hover:bg-amber-50 text-[#09251B] border border-[#0D4734]/30 rounded-lg text-xs font-display font-bold whitespace-nowrap cursor-pointer transition shadow-xs"
-                    >
-                      + {att.name}
-                    </button>
-                  ))}
-                </div>
+                <label className="text-[11px] font-display font-black text-[#0D4734] block mb-2">
+                  ⚡ Quick Nominate — search the {attendees.length} members
+                  <input
+                    type="text"
+                    aria-label="Search members to nominate"
+                    value={nomineeQuery}
+                    onChange={(e) => setNomineeQuery(e.target.value)}
+                    placeholder="Type a name, venture or sector…"
+                    className="w-full mt-1 bg-white border border-[#0D4734]/30 rounded-lg px-3 py-2 text-xs font-display font-bold text-[#09251B] focus:outline-none focus:border-[#0D4734]"
+                  />
+                </label>
+                {(() => {
+                  const query = nomineeQuery.trim().toLowerCase();
+                  // No query shows the newest members rather than nothing, so the
+                  // picker is still useful before anyone types.
+                  const matches = (query
+                    ? attendees.filter(a => [a.name, a.organization, a.title, a.location, ...(a.tags || [])]
+                        .some(field => (field || '').toLowerCase().includes(query)))
+                    : attendees
+                  );
+                  if (!matches.length) return (
+                    <p className="text-[11px] font-display text-[#09251B]/60 py-1">
+                      Nobody matches “{nomineeQuery.trim()}”. Type the name in the form below to nominate somebody who is not in the directory.
+                    </p>
+                  );
+                  return (
+                    <>
+                      <div className="flex flex-col gap-1 max-h-40 overflow-y-auto pb-1">
+                        {matches.slice(0, 20).map(att => (
+                          <button
+                            key={att.id}
+                            type="button"
+                            onClick={() => handleSelectAttendeeNominee(att)}
+                            className="text-left px-2.5 py-1.5 bg-white hover:bg-amber-50 text-[#09251B] border border-[#0D4734]/30 rounded-lg text-xs font-display font-bold cursor-pointer transition shadow-xs"
+                          >
+                            + {att.name}
+                            {(att.organization || att.stage) && (
+                              <span className="font-normal text-[#09251B]/60">
+                                {' — '}{[att.organization, att.stage].filter(Boolean).join(' · ')}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                      {matches.length > 20 && (
+                        <p className="text-[11px] font-display text-[#09251B]/60 pt-1">
+                          Showing 20 of {matches.length}. Keep typing to narrow it down.
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
 
