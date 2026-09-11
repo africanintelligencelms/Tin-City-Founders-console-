@@ -203,5 +203,15 @@ Preserve the deployed key and its
 existing environment source during routine updates; do not rotate it or introduce
 a second secrets file. Never commit keys to this repository.
 
-`render.yaml` remains a historical fallback. Switching hosting or DNS is a
-separate migration, not part of this update procedure.
+The Render fallback has been retired. It ran on a free tier with no persistent
+disk, so it could never hold the community directory — and because it kept
+auto-deploying from `main` it stayed a working, permanently empty copy of this
+app at `tin-city-founders.onrender.com`, which anyone scanning a pre-September
+QR code would have joined without seeing anything wrong.
+
+**Deleting `render.yaml` does not stop that service.** The blueprint file only
+describes it; the service itself lives in the Render dashboard and must be
+suspended or deleted there. Do that before handing out any printed material.
+
+Switching hosting or DNS is a separate migration, not part of this update
+procedure.
