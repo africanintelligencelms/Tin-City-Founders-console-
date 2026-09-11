@@ -228,7 +228,12 @@ export default function App() {
   };
 
   // Apply a full room snapshot (SSE INIT_SYNC / STATE_UPDATE or REST /api/live/sync)
+  // Until the first snapshot lands, the room is not empty — it is unknown. The
+  // screen used to render "0 members · 0 challenges" and a full set of empty
+  // states for a beat on every cold load, which reads as a dead community.
+  const [loaded, setLoaded] = useState(false);
   const applyServerSnapshot = (data: any) => {
+    setLoaded(true);
     if (!data) return;
     if (data.problems && Array.isArray(data.problems)) setProblems(data.problems);
     if (data.attendees && Array.isArray(data.attendees)) {
@@ -1233,7 +1238,7 @@ export default function App() {
               onHost={isHostVerified ? () => handleToggleAudienceMode(false) : undefined}
               syncStatus={syncStatus} onReconnect={handleManualReconnect}
               spotlight={spotlight} spotlightHistory={spotlightHistory}
-              isFirstVisit={isFirstVisit} onRecover={openRecovery}
+              isFirstVisit={isFirstVisit} onRecover={openRecovery} loaded={loaded}
               ballotCast={myRoundBallot.hasVoted && myRoundBallot.roundId === (roomSessionState.activeRound?.id ?? null)}
               mixerLive={!!roomSessionState.mixerLive}
             />
