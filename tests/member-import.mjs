@@ -130,7 +130,23 @@ try {
   assert.equal(again.attendee.organization, 'GridFarm Ltd');
   assert.equal((await returning('/api/profile/me')).attendee.stage, 'Building / pre-launch');
 
-  console.log('PASS: host gate, merge on number, field mapping, listed flag, phone privacy, distinct voter identities, vote independence, claim resistance, restart.');
+  // An imported member editing their own profile: link and stage must survive
+  // the round trip, and the link must go through the same validation as the
+  // import rather than being stored raw.
+  const own = browser();
+  const mine = await own('/api/profile/recover', { whatsapp: '08033333333' });
+  const edited = await own('/api/attendees', {
+    ...mine.attendee, name: 'Chidi Eze', link: 'www.studioc.ng/work?ref=x#top', stage: 'Launched / early traction'
+  });
+  assert.equal(edited.attendee.link, 'https://www.studioc.ng/work');   // query and fragment stripped
+  assert.equal(edited.attendee.stage, 'Launched / early traction');
+  assert.equal(edited.attendee.listed, true);                          // untouched by an edit that omits it
+  await own('/api/attendees', { ...mine.attendee, link: 'javascript:alert(1)' }, 400);
+  await own('/api/attendees', { ...mine.attendee, link: 'not a link' }, 400);
+  const cleared = await own('/api/attendees', { ...mine.attendee, link: '' });
+  assert.equal(cleared.attendee.link, '');                             // clearing is allowed
+
+  console.log('PASS: host gate, merge on number, field mapping, listed flag, phone privacy, distinct voter identities, vote independence, claim resistance, restart, profile round trip.');
 } finally {
   await stop();
   await rm(cwd, { recursive: true, force: true });

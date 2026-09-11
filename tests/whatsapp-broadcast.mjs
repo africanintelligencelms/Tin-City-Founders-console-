@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 const compiled=await build({entryPoints:['src/utils/whatsapp.ts'],bundle:true,write:false,platform:'node',format:'esm'});
-const {roundBroadcast,voterShareText}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+const {roundBroadcast,voterShareText,withheldFromBroadcast}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 const now=Date.parse('2026-09-10T10:00:00Z');
 const round={id:'round/a',title:'Build *together*',kind:'problem',status:'open',options:[{id:'a',label:'First'},{id:'b',label:'Second'}],maxSelections:2,ballotsCast:2,openedAt:now,endsAt:new Date(now+25*3600000).toISOString(),allowSquadSignup:true};
 const launch=roundBroadcast(round,'launch','https://console.tincityfounders.com/?host=SECRET',now);
@@ -17,7 +17,27 @@ assert(results.includes('Tied for first'));assert(results.includes('Amina — En
 round.ballotsCast=0;round.results=round.results.map(r=>({...r,votes:0,share:0}));round.allowSquadSignup=false;
 const empty=roundBroadcast(round,'results','https://example.com',now);
 assert(empty.includes('there is no winner'));assert(!empty.includes('and join a squad'));
-console.log('PASS: launch, live reminder duration, closed-results guard, ties, zero votes, multi-select percentages, skills and safe public links.');
+// Community-only members: present in the app, withheld from a message that
+// leaves it. The host is told who, by name, rather than people vanishing.
+round.ballotsCast=2;round.results=[{optionId:'a',label:'First',votes:2,share:1},{optionId:'b',label:'Second',votes:0,share:0}];round.allowSquadSignup=true;
+round.options[0].squadMembers=[{id:'att-public',name:'Amina',superpower:'Engineering'},{id:'att-private',name:'Bello',superpower:'Design'}];
+const withNobodyWithheld=roundBroadcast(round,'results','https://example.com',now);
+assert(withNobodyWithheld.includes('Amina'));assert(withNobodyWithheld.includes('Bello'));
+const withheld=roundBroadcast(round,'results','https://example.com',now,{withheldIds:['att-private']});
+assert(withheld.includes('Amina — Engineering'),'public member dropped');
+assert(!withheld.includes('Bello'),'community-only member leaked into the broadcast');
+assert(!withheld.includes('Design'),'community-only skill leaked into the broadcast');
+assert.deepEqual(withheldFromBroadcast(round,['att-private']),[{id:'att-private',name:'Bello'}]);
+assert.deepEqual(withheldFromBroadcast(round,[]),[]);
+assert.deepEqual(withheldFromBroadcast(round,['att-nobody']),[],'reports someone not in this ballot');
+// Withholding everyone in an option drops the option heading too, rather than
+// leaving an empty squad title implying the members are hidden.
+const allWithheld=roundBroadcast(round,'results','https://example.com',now,{withheldIds:['att-public','att-private']});
+assert(allWithheld.includes('No squad members yet.'));assert(!allWithheld.includes('Amina'));
+// An omitted audience argument must behave exactly as before.
+assert.equal(roundBroadcast(round,'results','https://example.com',now),withNobodyWithheld);
+
+console.log('PASS: launch, live reminder duration, closed-results guard, ties, zero votes, multi-select percentages, skills, safe public links, and community-only withholding.');
 
 const ballot={roundId:round.id,hasVoted:true,selections:['a','b']};
 assert.equal(voterShareText(round,{...ballot,hasVoted:false},'https://example.com',now),'');

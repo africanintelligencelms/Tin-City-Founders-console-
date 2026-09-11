@@ -1,4 +1,4 @@
-import type { VotingRound, MyRoundBallot } from '../types';
+import type { VotingRound, MyRoundBallot, RoundOption } from '../types';
 
 export type BroadcastKind = 'launch' | 'reminder' | 'results';
 const clean = (value: string) => value.replace(/[\r\n*_~`]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -14,7 +14,18 @@ export function voterShareText(round: VotingRound, ballot: MyRoundBallot, origin
   return `✅ I voted in "${clean(round.title)}" in the TCF Community Pulse.${choices.length ? `\nMy choice${choices.length > 1 ? 's' : ''}: ${choices.join('; ')}` : ''}\n\n${round.ballotsCast} member${round.ballotsCast === 1 ? ' has' : 's have'} voted.\n${invitation}\n👉 ${link}`;
 }
 
-export function roundBroadcast(round: VotingRound, kind: BroadcastKind, origin: string, now = Date.now()) {
+// Members who answered "community only" on the directory form. They are fully
+// present in the app; what they declined is their details being carried OUT of
+// it — and a WhatsApp broadcast is the one place in this app where that happens.
+// So the deck names them to the host and leaves them out by default. Nothing is
+// hidden: the host sees exactly who was withheld and can include them, which is
+// the call they said belongs to the host and the member between them.
+export interface BroadcastAudience {
+  /** Attendee ids whose details should not leave the platform. */
+  withheldIds?: string[];
+}
+
+export function roundBroadcast(round: VotingRound, kind: BroadcastKind, origin: string, now = Date.now(), audience: BroadcastAudience = {}) {
   const link = `${new URL(origin).origin}/?mode=community&round=${encodeURIComponent(round.id)}`;
   const title = clean(round.title);
   const deadline = round.endsAt
@@ -35,6 +46,21 @@ export function roundBroadcast(round: VotingRound, kind: BroadcastKind, origin: 
     : top.length > 1 ? `*Tied for first:* ${top.map(r => clean(r.label)).join('; ')}`
     : `*Top choice:* ${clean(top[0].label)}`;
   const breakdown = sorted.map(r => `${sorted.findIndex(entry => entry.votes === r.votes) + 1}. ${clean(r.label)} — ${r.votes} vote${r.votes === 1 ? '' : 's'} (${Math.round(r.share * 100)}%)`).join('\n');
-  const squads = round.options.filter(o => o.squadMembers?.length).map(o => `*${clean(o.label)}*\n${o.squadMembers!.map(m => `• ${clean(m.name)} — ${clean(m.superpower || 'Skill not added yet')}`).join('\n')}`).join('\n\n');
+  const withheld = new Set(audience.withheldIds || []);
+  const shown = (option: RoundOption) => (option.squadMembers || []).filter(m => !withheld.has(m.id));
+  const squads = round.options.filter(o => shown(o).length).map(o => `*${clean(o.label)}*\n${shown(o).map(m => `• ${clean(m.name)} — ${clean(m.superpower || 'Skill not added yet')}`).join('\n')}`).join('\n\n');
   return `🏆 *TCF FINAL RESULTS: ${title}*\n\n*Ballots cast:* ${round.ballotsCast}\n${outcome}\n\n${breakdown}${round.maxSelections > 1 ? '\nPercentages are per voter; multiple choices can total over 100%.' : ''}\n\n👥 *EXECUTION SQUADS*\n${squads || 'No squad members yet.'}\n\n👉 View results${round.allowSquadSignup !== false ? ' and join a squad' : ''}: ${link}`;
+}
+
+// Which squad members in this round are community-only, so the deck can say so
+// by name rather than silently dropping people from the message.
+export function withheldFromBroadcast(round: VotingRound, withheldIds: string[]) {
+  const withheld = new Set(withheldIds);
+  const seen = new Map<string, string>();
+  for (const option of round.options) {
+    for (const member of option.squadMembers || []) {
+      if (withheld.has(member.id)) seen.set(member.id, member.name);
+    }
+  }
+  return [...seen.entries()].map(([id, name]) => ({ id, name }));
 }

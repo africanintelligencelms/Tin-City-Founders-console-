@@ -1264,6 +1264,7 @@ export default function App() {
               onUpdateSessionState={handleUpdateSessionState}
               onBroadcastAnnouncement={handleBroadcastAnnouncement}
               connectedClientsCount={attendees.length}
+              attendees={attendees}
               isCompact={true}
               onNotify={addToast}
               onSectorRequest={handleSectorRequest}
