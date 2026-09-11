@@ -453,6 +453,24 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
               <span className="hidden sm:inline">Audience Join QR</span>
             </button>
 
+            {/* Mixer Live Toggle — decides whether the public community screen
+                offers a way into mixer mode at all. Off by default: outside an
+                event that door leads to a host-driven screen with nothing on it. */}
+            <button
+              onClick={() => onUpdateSessionState({ mixerLive: !sessionState.mixerLive })}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold font-display transition cursor-pointer ${
+                sessionState.mixerLive
+                  ? 'bg-amber-500/20 border-amber-400/60 text-amber-200 shadow-xs'
+                  : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/15'
+              }`}
+              title={sessionState.mixerLive
+                ? 'A mixer is live. The community screen is offering mixer mode. Click to end it.'
+                : 'No mixer running. Click when the event starts to show mixer mode on the community screen.'}
+            >
+              <Radio className={`w-3 h-3 ${sessionState.mixerLive ? 'text-amber-300' : 'text-white/60'}`} />
+              <span className="hidden md:inline">{sessionState.mixerLive ? 'Mixer Live' : 'Mixer Off'}</span>
+            </button>
+
             {/* Lock Nav Toggle */}
             <button
               onClick={handleToggleLockNav}

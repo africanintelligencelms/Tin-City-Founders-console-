@@ -47,6 +47,14 @@ export const FounderCheckInModal: React.FC<FounderCheckInModalProps> = ({
     }
   }, [isOpen, currentProfile, initialRecovery]);
 
+  // Escape closes, matching the challenge detail and the profile sheet.
+  useEffect(() => {
+    if (!isOpen) return;
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -103,7 +111,14 @@ export const FounderCheckInModal: React.FC<FounderCheckInModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#09251B]/80 backdrop-blur-xs overflow-y-auto">
+    // Dismissible by backdrop and Escape. This modal used to be forced open over
+    // the page on every first visit with neither escape, which made the first
+    // frame a wall rather than the community.
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#09251B]/80 backdrop-blur-xs overflow-y-auto"
+      onClick={onClose}
+      role="presentation"
+    >
       <div 
         className="bg-white border-3 border-[#09251B] rounded-3xl w-full max-w-md p-6 sm:p-7 shadow-[8px_8px_0px_0px_#09251B] relative my-auto"
         onClick={(e) => e.stopPropagation()}
@@ -205,15 +220,11 @@ export const FounderCheckInModal: React.FC<FounderCheckInModalProps> = ({
             <button type="button" disabled={busy} onClick={() => { setRecovering(!recovering); setError(''); }} className="w-full py-2 text-sm font-bold text-[#0D4734] underline">
               {recovering ? 'Back to quick entry' : 'Already joined? Find your profile'}
             </button>
-            {isFirstCheckIn && (
-              <button
-                type="button"
-                onClick={onClose}
-                className="w-full text-center text-xs text-stone-500 hover:text-stone-800 font-medium py-1.5 cursor-pointer"
-              >
-                Browse as Guest (Read-Only)
-              </button>
-            )}
+            {/* The "Browse as Guest (Read-Only)" link that used to sit here was
+                both the only way out and inaccurate — a guest can read every
+                challenge, member and result. The modal now closes on the X, the
+                backdrop or Escape, so an escape hatch styled as an apology is
+                worse than none. */}
           </div>
         </form>
       </div>

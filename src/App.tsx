@@ -30,6 +30,11 @@ export default function App() {
   // The richer profile sheet. Separate surface, separate state: check-in stays
   // name-only, and this only exists while an attendee has chosen to open it.
   const [initialRecovery, setInitialRecovery] = useState(false);
+  // Opens the check-in modal already flipped to "find my profile". Every one of
+  // the imported members arrives with a server-side profile and no cookie on
+  // their device, so recovery — not joining — is the correct first action for
+  // most people who look like newcomers.
+  const openRecovery = () => { setInitialRecovery(true); setIsProfileSheetOpen(false); setIsCheckInModalOpen(true); };
   const [isProfileSheetOpen, setIsProfileSheetOpen] = useState<boolean>(false);
   const [isAnalyticsModalOpen, setIsAnalyticsModalOpen] = useState<boolean>(false);
   const [isFirstVisit, setIsFirstVisit] = useState<boolean>(false);
@@ -431,9 +436,11 @@ export default function App() {
           }
         }).catch(() => {});
       } else {
-        // First-time visitor walking in: prompt check-in modal
+        // First-time visitor. Mark them as new so the community screen can show
+        // an inline invitation, but do NOT open the modal over the page: the
+        // first frame was a wall whose only way out was the lowest-contrast
+        // control on screen. Joining is one tap away from the page itself.
         setIsFirstVisit(true);
-        setIsCheckInModalOpen(true);
       }
 
       const savedVotes = localStorage.getItem('tcf_user_votes');
@@ -1215,20 +1222,20 @@ export default function App() {
       {audienceOnly ? (
         <div className={`min-h-screen ${!isVotingOpen ? 'bg-[#FFF0E6]' : 'bg-[#FAF6EE]'} text-stone-900 transition-colors duration-300`}>
           {!isMixerMode ? (
-            <>
-            <SpotlightCard spotlight={spotlight} history={spotlightHistory} />
             <CommunityView
               problems={problems} attendees={attendees} categories={liveCategories}
               trustees={trusteeCandidates} profile={currentProfile} myVotes={myVotes}
-              round={roomSessionState.activeRound || null} lastRound={lastRound} ballot={myRoundBallot}
-              onRoundSquad={handleRoundSquad} onVote={handleCommunityVote} onVoteCategory={handleCommunityCategory} onVoteTrustee={handleCommunityTrustee}
-              onSubmit={handleCommunitySubmit} onComment={handleCommunityComment} onBallot={handleSubmitBallot}
+              round={roomSessionState.activeRound || null} lastRound={lastRound}
+              onVote={handleCommunityVote} onVoteCategory={handleCommunityCategory} onVoteTrustee={handleCommunityTrustee}
+              onSubmit={handleCommunitySubmit} onComment={handleCommunityComment}
               onProfile={() => setIsProfileSheetOpen(true)} onJoin={() => setIsCheckInModalOpen(true)}
               onMixer={() => selectParticipantMode(true)}
               onHost={isHostVerified ? () => handleToggleAudienceMode(false) : undefined}
               syncStatus={syncStatus} onReconnect={handleManualReconnect}
+              spotlight={spotlight} spotlightHistory={spotlightHistory}
+              isFirstVisit={isFirstVisit} onRecover={openRecovery}
+              mixerLive={!!roomSessionState.mixerLive}
             />
-            </>
           ) : (<>
           <div className="bg-[#0D4734] text-white px-4 py-3 flex items-center justify-between">
             <span className="text-sm font-bold">Live mixer</span>
@@ -1277,7 +1284,7 @@ export default function App() {
           {/* Optional audience profile sheet (Give/Ask, role, skills, area, bio) */}
           <AudienceProfileSheet
             onSignOut={handleSignOut}
-            onRecoverProfile={() => { setInitialRecovery(true); setIsProfileSheetOpen(false); setIsCheckInModalOpen(true); }}
+            onRecoverProfile={openRecovery}
             isOpen={isProfileSheetOpen}
             currentProfile={currentProfile}
             onClose={() => setIsProfileSheetOpen(false)}
@@ -1415,7 +1422,7 @@ export default function App() {
 
           <AudienceProfileSheet
             onSignOut={handleSignOut}
-            onRecoverProfile={() => { setInitialRecovery(true); setIsProfileSheetOpen(false); setIsCheckInModalOpen(true); }}
+            onRecoverProfile={openRecovery}
             isOpen={isProfileSheetOpen}
             currentProfile={currentProfile}
             onClose={() => setIsProfileSheetOpen(false)}
