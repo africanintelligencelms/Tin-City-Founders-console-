@@ -253,6 +253,10 @@ export interface RoomSessionState {
   announcement?: LiveAnnouncement | null;
   pinnedProblemId?: string;
   allowAudienceNavigation: boolean;
+  // Whether a mixer is running right now. Cannot be inferred from activePhase,
+  // which always holds a value and defaults to 'voting'. The community screen
+  // offers mixer mode only while this is true.
+  mixerLive?: boolean;
   // Null outside a round; drives the ballot/results takeover on participant phones.
   activeRound?: VotingRound | null;
   updatedAt: number;

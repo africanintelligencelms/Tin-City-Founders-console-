@@ -3,12 +3,13 @@ import { PastBallots } from './PastBallots';
 import { SquadJoin, SquadRoster } from './SquadJoin';
 import React, { useEffect, useState } from 'react';
 import { Search, Plus, ThumbsUp, Users, ArrowRight, MessageSquare, X } from 'lucide-react';
-import type { AttendeeProfile, CategoryInfo, PlateauProblem, VotingRound, MyRoundBallot, MyVotes, TrusteeCandidate } from '../types';
+import type { AttendeeProfile, CategoryInfo, PlateauProblem, VotingRound, MyVotes, TrusteeCandidate, Spotlight } from '../types';
 import { BrandLogo } from './BrandLogo';
 import { AttendeeDirectory } from './AttendeeDirectory';
 import { SeamlessProblemWizard } from './SeamlessProblemWizard';
 import { RoundDeadline } from './RoundDeadline';
 import { CommunityBallot } from './CommunityBallot';
+import { SpotlightCard } from './SpotlightCard';
 
 interface Props {
   problems: PlateauProblem[];
@@ -19,20 +20,27 @@ interface Props {
   myVotes: MyVotes;
   round: VotingRound | null;
   lastRound: VotingRound | null;
-  ballot: MyRoundBallot;
   onVote: (id: string, commit: boolean, name?: string, skill?: string) => Promise<void>;
-  onRoundSquad: (roundId: string, optionId: string, skill?: string) => Promise<void>;
   onVoteCategory: (name: string) => Promise<void>;
   onVoteTrustee: (id: string) => Promise<void>;
   onSubmit: React.ComponentProps<typeof SeamlessProblemWizard>['onSubmit'];
   onComment: (id: string, author: string, text: string) => Promise<void>;
-  onBallot: (selections: string[]) => Promise<void>;
   onProfile: () => void;
   onJoin: () => void;
+  // Opens check-in already flipped to "find my profile".
+  onRecover: () => void;
   onMixer: () => void;
   onHost?: () => void;
   syncStatus: 'connected' | 'connecting' | 'reconnecting' | 'offline';
   onReconnect: () => void;
+  // The spotlight used to render in App, above this component and outside the
+  // layout it owns, so nothing could budget for its height. It lives here now.
+  spotlight: Spotlight | null;
+  spotlightHistory: Spotlight[];
+  isFirstVisit: boolean;
+  // A mixer is running right now. Not derivable from activePhase, which always
+  // holds a value; see RoomSessionState.mixerLive.
+  mixerLive: boolean;
 }
 
 export function CommunityView(p: Props) {
@@ -52,6 +60,15 @@ export function CommunityView(p: Props) {
     const url = new URL(window.location.href); url.searchParams.set('round', id); url.searchParams.set('mode', 'community');
     window.history.pushState({}, '', url); setLinkedRound(id); setView('ballot');
   };
+  // Dismissal of the join/recover prompt is per-device and remembered. The Join
+  // button in the header is always there, so dismissing never traps anyone.
+  const [guestPromptDismissed, setGuestPromptDismissed] = useState(() => {
+    try { return localStorage.getItem('tcf_guest_prompt_dismissed') === '1'; } catch { return false; }
+  });
+  const dismissGuestPrompt = () => {
+    setGuestPromptDismissed(true);
+    try { localStorage.setItem('tcf_guest_prompt_dismissed', '1'); } catch {}
+  };
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('All');
   const [sort, setSort] = useState('newest');
@@ -69,7 +86,14 @@ export function CommunityView(p: Props) {
   const detail = p.problems.find(item => item.id === detailId);
   const round = p.round || p.lastRound;
   const act = async (key: string, action: () => Promise<void>) => {
-    if (!p.profile) { p.onJoin(); return; }
+    // A silent bounce into the check-in modal was the single most confusing
+    // thing on this screen: the button looked live, nothing happened, and a
+    // form appeared with no stated connection to what was pressed.
+    if (!p.profile) {
+      setError('Add your name first — it takes about ten seconds, and it is what shows beside your support.');
+      p.onJoin();
+      return;
+    }
     setBusy(key); setError('');
     try { await action(); } catch (e) { setError(e instanceof Error ? e.message : 'Please try again.'); }
     finally { setBusy(null); }
@@ -78,51 +102,124 @@ export function CommunityView(p: Props) {
   const filtered = p.problems.filter(item => (category === 'All' || item.category === category) && `${item.title} ${item.description} ${item.submittedBy}`.toLowerCase().includes(query.toLowerCase())).sort((a, b) => sort === 'votes' ? b.upvotes - a.upvotes : sort === 'squads' ? b.commitments - a.commitments : b.createdAt.localeCompare(a.createdAt));
 
   return <div className="min-h-screen bg-[#F6F3EC] text-[#09251B]">
-    <header className="bg-white border-b-2 border-[#09251B] px-4 sm:px-8 py-4">
-      <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
-        <button onClick={() => openSection('problems')} aria-label="Community home"><BrandLogo variant="full" /></button>
-        <div className="flex flex-wrap items-center gap-2">
-          <button className="text-xs px-2 py-2" onClick={p.onReconnect}>{p.syncStatus === 'connected' ? '● Connected' : 'Reconnect'}</button>
-          <button className={button} onClick={p.onMixer}>Mixer mode</button>
-          {p.onHost && <button className={button} onClick={p.onHost}>Host console</button>}
+    {/* One row, always. The old header wrapped to three on a phone because it
+        carried a full wordmark plus four buttons, two of which were only
+        meaningful to a host. */}
+    <header className="bg-white border-b-2 border-[#09251B] px-4 sm:px-8 py-3">
+      <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+        {/* The full wordmark is ~250px and pushed the profile button off a
+            375px screen. Mark only on a phone, wordmark from sm up. */}
+        <button onClick={() => openSection('problems')} aria-label="Community home" className="shrink-0">
+          <span className="sm:hidden"><BrandLogo variant="icon-only" /></span>
+          <span className="hidden sm:block"><BrandLogo variant="full" /></span>
+        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Silent while healthy. A permanent "● Connected" badge is a status
+              light nobody reads until it is wrong. */}
+          {p.syncStatus !== 'connected' && (
+            <button className="text-xs font-bold px-2 py-2 text-amber-700 underline" onClick={p.onReconnect}>
+              {p.syncStatus === 'offline' ? 'Offline · Retry' : 'Reconnecting…'}
+            </button>
+          )}
+          {/* Only during an actual event. A host device keeps it so a mixer can
+              be set up before it is switched on. */}
+          {/* When a mixer IS live this must show on a phone — the attendee in the
+              room is the whole audience for it. The host-only "set one up"
+              variant is what gets hidden on small screens. */}
+          {p.mixerLive && (
+            <button className={`${button} bg-[#E5A93C] border-[#09251B]`} onClick={p.onMixer}>
+              Mixer is live
+            </button>
+          )}
+          {!p.mixerLive && p.onHost && (
+            <button className={`${button} hidden sm:inline-block`} onClick={p.onMixer}>Mixer mode</button>
+          )}
+          {p.onHost && <button className={`${button} hidden sm:inline-block`} onClick={p.onHost}>Host console</button>}
           <button className={`${button} flex items-center gap-2`} onClick={p.profile ? p.onProfile : p.onJoin}>
-            {p.profile && <span className="w-7 h-7 rounded-lg grid place-items-center text-white" style={{ background: p.profile.avatarColor || '#0D4734' }}>{p.profile.name.slice(0, 1)}</span>}
-            {p.profile ? 'Your profile' : 'Join community'}
+            {p.profile
+              ? <>
+                  <span className="w-7 h-7 rounded-lg grid place-items-center text-white shrink-0" style={{ background: p.profile.avatarColor || '#0D4734' }}>{p.profile.name.slice(0, 1)}</span>
+                  <span className="hidden sm:inline">Your profile</span>
+                </>
+              : 'Join'}
           </button>
         </div>
       </div>
     </header>
     <main className="max-w-7xl mx-auto px-4 sm:px-8 py-6 sm:py-10">
-      <section className="bg-[#0D4734] text-[#FAF6EE] rounded-3xl border-2 border-[#09251B] p-6 sm:p-10 shadow-[5px_5px_0_#E5A93C] mb-8">
-        <p className="text-xs tracking-widest uppercase text-[#E5A93C] font-bold">Tin City Founders · Jos, Plateau State</p>
-        <h1 className="text-3xl sm:text-5xl font-display font-black mt-3 max-w-3xl">Build the community.<br />Shape what happens next.</h1>
-        <p className="mt-4 max-w-2xl text-emerald-100">Explore local challenges, support ideas, and find people to build with. Drop in whenever it works for you.</p>
-        <div className="flex flex-wrap items-center gap-4 mt-6">
-          <button className="bg-[#E5A93C] text-[#09251B] rounded-xl px-5 py-3 font-bold flex items-center gap-2" onClick={() => p.profile ? setSubmitOpen(true) : p.onJoin()}><Plus size={18} /> Share a challenge</button>
-          <span className="text-sm">{p.attendees.length} members · {p.problems.length} challenges</span>
-        </div>
+      {/* The hero cost ~350px to restate the header. One line, and the action. */}
+      <section className="flex flex-wrap items-center justify-between gap-3 mb-5">
+        <p className="text-sm sm:text-base font-bold">
+          Jos founders backing each other’s work.{' '}
+          <button onClick={() => openSection('members')} className="font-normal underline decoration-[#0D4734]/30 hover:decoration-[#0D4734]">
+            {p.attendees.length} members
+          </button>
+          <span className="font-normal"> · {p.problems.length} challenges</span>
+        </p>
+        <button className="bg-[#E5A93C] text-[#09251B] rounded-xl px-4 py-2.5 font-bold flex items-center gap-2" onClick={() => p.profile ? setSubmitOpen(true) : p.onJoin()}>
+          <Plus size={18} /> Share a challenge
+        </button>
       </section>
+
+      {/* Everyone we imported has a profile on the server and no cookie on their
+          phone, so on a first open they look exactly like a stranger. Recovery
+          therefore sits beside joining at equal weight, not as an apology
+          underneath it. Dismissing is remembered; the Join button in the header
+          never goes away, so dismissal costs nothing. */}
+      {!p.profile && !guestPromptDismissed && (
+        <section className="rounded-2xl border border-[#0D4734]/25 bg-white p-4 mb-5">
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-sm">
+              <strong>{linkedRound ? 'You’ve been sent a community ballot.' : 'New here?'}</strong>{' '}
+              Add your name to support challenges and appear in the directory.
+            </p>
+            <button aria-label="Dismiss" className="text-xl leading-none px-1 text-[#09251B]/50 hover:text-[#09251B]" onClick={dismissGuestPrompt}>&times;</button>
+          </div>
+          <div className="flex flex-wrap gap-2 mt-3">
+            <button className={`${button} bg-[#0D4734] text-white border-[#0D4734] hover:bg-[#166E52]`} onClick={p.onJoin}>Add your name</button>
+            <button className={`${button} bg-white`} onClick={p.onRecover}>Already a member? Find your profile</button>
+          </div>
+        </section>
+      )}
 
       {round && <section className="bg-white border border-[#0D4734]/30 rounded-2xl p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
         <div><p className="text-xs font-bold uppercase text-[#0D4734]">{round.status === 'open' ? 'Community ballot · Open' : 'Latest ballot results'}</p><h2 className="font-bold text-lg">{round.title}</h2><p className="text-sm text-stone-600">{round.ballotsCast} ballots submitted</p><RoundDeadline round={round} /></div>
         <button className={`${button} flex items-center gap-2`} onClick={() => openBallot(round.id)}>{round.status === 'open' ? 'View ballot' : 'View results'}<ArrowRight size={16} /></button>
       </section>}
 
-      <nav aria-label="Community sections" className="flex flex-wrap gap-2 mb-6">
-        {([['problems', 'Challenges'], ['sectors', 'Sectors'], ['trustees', 'Trustees'], ['members', 'Member directory'], ['history', 'Past ballots']] as const).map(([id, label]) => <button key={id} aria-current={view === id ? 'page' : undefined} onClick={() => openSection(id)} className={`${button} ${view === id ? 'bg-[#0D4734] text-white hover:bg-[#166E52]' : 'bg-white'}`}>{label}</button>)}
+      <nav aria-label="Community sections" className="flex gap-2 mb-6 overflow-x-auto pb-1 -mx-1 px-1">
+        {(([['problems', 'Challenges'], ['members', 'Members'], ['sectors', 'Sectors'],
+           // Shown only once somebody has been nominated. An empty governance
+           // tab was on screen for every visitor, permanently.
+           ...(p.trustees.length ? [['trustees', 'Trustees'] as const] : []),
+           ['history', 'Results']] as const) as ReadonlyArray<readonly ['problems' | 'members' | 'sectors' | 'trustees' | 'history', string]>).map(([id, label]) => <button key={id} aria-current={view === id ? 'page' : undefined} onClick={() => openSection(id)} className={`${button} ${view === id ? 'bg-[#0D4734] text-white hover:bg-[#166E52]' : 'bg-white'}`}>{label}</button>)}
       </nav>
       {error && <p role="alert" className="text-red-700 mb-4">{error}</p>}
       {view === 'ballot' && (linkedRound || round?.id ? <CommunityBallot key={linkedRound || round!.id} roundId={linkedRound || round!.id} profile={p.profile} onJoin={p.onJoin} /> : <p>No ballot is available yet. You can still explore and support community challenges.</p>)}
 
       {view === 'history' && <PastBallots onOpen={openBallot} />}
       {view === 'members' && <AttendeeDirectory community attendees={p.attendees} currentProfile={p.profile} onOpenCheckIn={p.profile ? p.onProfile : p.onJoin} />}
+      {/* Moved in from App, where it rendered above this component and outside
+          the layout it owns — so nothing could account for its height. On the
+          challenges tab only: it is a weekly highlight, not page furniture. */}
+      {view === 'problems' && <SpotlightCard spotlight={p.spotlight} history={p.spotlightHistory} />}
       {view === 'problems' && <>
-        <div className="flex flex-wrap gap-3 mb-4">
-          <label className="flex items-center gap-2 bg-white border rounded-xl px-3 flex-1 min-w-48"><Search size={18} /><input aria-label="Search challenges" className="py-3 bg-transparent w-full outline-none" placeholder="Search challenges, ideas, or founders" value={query} onChange={e => setQuery(e.target.value)} /></label>
-          <select aria-label="Filter by sector" className={button} value={category} onChange={e => setCategory(e.target.value)}><option>All</option>{Array.from(new Set(p.problems.map(item => item.category))).map(name => <option key={name}>{name}</option>)}</select>
-          <select aria-label="Sort challenges" className={button} value={sort} onChange={e => setSort(e.target.value)}><option value="newest">Newest first</option><option value="votes">Most supported</option><option value="squads">Most commitments</option></select>
+        {/* Search stays out; sector and sort fold away. The three of them stacked
+            to roughly 180px on a phone — more room than the first challenge got.
+            The summary names any filter that is actually on, so a narrowed list
+            never looks like an empty community. */}
+        <div className="mb-4">
+          <label className="flex items-center gap-2 bg-white border rounded-xl px-3"><Search size={18} /><input aria-label="Search challenges" className="py-3 bg-transparent w-full outline-none" placeholder="Search challenges, ideas, or founders" value={query} onChange={e => setQuery(e.target.value)} /></label>
+          <details className="mt-2">
+            <summary className="cursor-pointer text-sm font-bold py-1">
+              Filters{category !== 'All' || sort !== 'newest' ? ` · ${[category !== 'All' ? category : null, sort === 'votes' ? 'most supported' : sort === 'squads' ? 'most commitments' : null].filter(Boolean).join(', ')}` : ''}
+            </summary>
+            <div className="flex flex-wrap gap-2 mt-2">
+              <select aria-label="Filter by sector" className={button} value={category} onChange={e => setCategory(e.target.value)}><option>All</option>{Array.from(new Set(p.problems.map(item => item.category))).map(name => <option key={name}>{name}</option>)}</select>
+              <select aria-label="Sort challenges" className={button} value={sort} onChange={e => setSort(e.target.value)}><option value="newest">Newest first</option><option value="votes">Most supported</option><option value="squads">Most commitments</option></select>
+            </div>
+          </details>
         </div>
-        <p className="text-sm text-stone-600 mb-5">Support here shows ongoing interest in a challenge. Formal community decisions use the ballot above when one is open.</p>
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
           {filtered.map(item => <article key={item.id} className="bg-white border-2 border-[#09251B] rounded-2xl p-5 shadow-[3px_3px_0_#09251B] flex flex-col">
             <div className="flex flex-wrap gap-2 text-xs mb-3"><span className="bg-[#EBF3EF] rounded-lg px-2 py-1">{item.category}</span><span className="bg-amber-50 rounded-lg px-2 py-1">{item.status}</span></div>

@@ -822,6 +822,12 @@ interface RoomSessionState {
   } | null;
   pinnedProblemId?: string;
   allowAudienceNavigation: boolean;
+  // Whether a mixer is actually running right now. It cannot be inferred:
+  // activePhase defaults to "voting" and is always set, so there is no "off"
+  // state to read. The community screen uses this to decide whether to offer
+  // mixer mode at all — without it, every public visitor was shown a door into
+  // a host-driven screen with nothing behind it.
+  mixerLive: boolean;
   activeRound?: VotingRound | null;
   updatedAt: number;
 }
@@ -832,6 +838,7 @@ let roomSessionState: RoomSessionState = {
   announcement: null,
   pinnedProblemId: undefined,
   allowAudienceNavigation: true,
+  mixerLive: false,
   activeRound: null,
   updatedAt: Date.now()
 };
@@ -1088,7 +1095,7 @@ app.get("/api/session/state", (_req, res) => {
 
 // Host Conductor updates room stage (instantly directs all audience screens)
 app.post("/api/session/state", requireHost, (req, res) => {
-  const { activePhase, phaseTitle, allowAudienceNavigation, pinnedProblemId } = req.body || {};
+  const { activePhase, phaseTitle, allowAudienceNavigation, pinnedProblemId, mixerLive } = req.body || {};
 
   if (activePhase) {
     roomSessionState.activePhase = activePhase;
@@ -1101,6 +1108,9 @@ app.post("/api/session/state", requireHost, (req, res) => {
   }
   if (pinnedProblemId !== undefined) {
     roomSessionState.pinnedProblemId = pinnedProblemId;
+  }
+  if (mixerLive !== undefined) {
+    roomSessionState.mixerLive = !!mixerLive;
   }
   roomSessionState.updatedAt = Date.now();
 
