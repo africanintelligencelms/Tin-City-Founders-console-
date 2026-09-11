@@ -10,6 +10,7 @@ import { SeamlessProblemWizard } from './SeamlessProblemWizard';
 import { RoundDeadline } from './RoundDeadline';
 import { CommunityBallot } from './CommunityBallot';
 import { SpotlightCard } from './SpotlightCard';
+import { plural } from '../utils/format';
 
 interface Props {
   problems: PlateauProblem[];
@@ -38,6 +39,9 @@ interface Props {
   spotlight: Spotlight | null;
   spotlightHistory: Spotlight[];
   isFirstVisit: boolean;
+  // Whether this device has already voted in the open round. The full ballot
+  // object was passed and never read; this is the one fact the card needs.
+  ballotCast: boolean;
   // A mixer is running right now. Not derivable from activePhase, which always
   // holds a value; see RoomSessionState.mixerLive.
   mixerLive: boolean;
@@ -182,10 +186,29 @@ export function CommunityView(p: Props) {
         </section>
       )}
 
-      {round && <section className="bg-white border border-[#0D4734]/30 rounded-2xl p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div><p className="text-xs font-bold uppercase text-[#0D4734]">{round.status === 'open' ? 'Community ballot · Open' : 'Latest ballot results'}</p><h2 className="font-bold text-lg">{round.title}</h2><p className="text-sm text-stone-600">{round.ballotsCast} ballots submitted</p><RoundDeadline round={round} /></div>
-        <button className={`${button} flex items-center gap-2`} onClick={() => openBallot(round.id)}>{round.status === 'open' ? 'View ballot' : 'View results'}<ArrowRight size={16} /></button>
-      </section>}
+      {/* Everything else on this screen is a white card with a Support button.
+          The ballot is the one thing that genuinely differs — it has a deadline,
+          it closes, and it produces a result the community is bound by — so it
+          is the one thing that looks different. An open ballot is dark and gold;
+          a finished one recedes to a quiet white card. */}
+      {round && (round.status === 'open'
+        ? <section className="bg-[#0D4734] text-[#FAF6EE] border-2 border-[#09251B] rounded-2xl p-5 mb-6 shadow-[4px_4px_0_#E5A93C]">
+            <p className="text-xs font-bold uppercase tracking-widest text-[#E5A93C]">Community ballot · Open</p>
+            <h2 className="font-bold text-xl mt-1">{round.title}</h2>
+            <p className="text-sm text-emerald-100 mt-1">{plural(round.ballotsCast, 'ballot')} submitted</p>
+            <RoundDeadline round={round} />
+            <button className="mt-4 w-full sm:w-auto bg-[#E5A93C] text-[#09251B] rounded-xl px-5 py-3 font-bold flex items-center justify-center gap-2" onClick={() => openBallot(round.id)}>
+              {p.ballotCast ? 'Change your vote' : 'Vote now'}<ArrowRight size={16} />
+            </button>
+          </section>
+        : <section className="bg-white border border-[#0D4734]/30 rounded-2xl p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold uppercase text-[#0D4734]">Latest ballot results</p>
+              <h2 className="font-bold text-lg">{round.title}</h2>
+              <p className="text-sm text-stone-600">{plural(round.ballotsCast, 'ballot')} submitted</p>
+            </div>
+            <button className={`${button} flex items-center gap-2`} onClick={() => openBallot(round.id)}>View results<ArrowRight size={16} /></button>
+          </section>)}
 
       <nav aria-label="Community sections" className="flex gap-2 mb-6 overflow-x-auto pb-1 -mx-1 px-1">
         {(([['problems', 'Challenges'], ['members', 'Members'], ['sectors', 'Sectors'],
@@ -225,7 +248,7 @@ export function CommunityView(p: Props) {
             <div className="flex flex-wrap gap-2 text-xs mb-3"><span className="bg-[#EBF3EF] rounded-lg px-2 py-1">{item.category}</span><span className="bg-amber-50 rounded-lg px-2 py-1">{item.status}</span></div>
             <h2 className="font-display font-black text-xl">{item.title}</h2><p className="text-sm text-stone-600 mt-3 line-clamp-3">{item.description}</p>
             <div className="flex flex-wrap gap-1 mt-4">{item.skillsNeeded.map(skill => <span key={skill} className="text-xs rounded-lg border px-2 py-1">{skill}</span>)}</div>
-            <p className="text-xs text-stone-500 mt-4 mb-5">Shared by {item.submittedBy} · {item.commitments} squad commitments</p>
+            <p className="text-xs text-stone-500 mt-4 mb-5">Shared by {item.submittedBy} · {plural(item.commitments, 'squad commitment')}</p>
             <div className="mt-auto flex flex-wrap gap-2 border-t pt-4">
               <button disabled={busy !== null} aria-pressed={p.myVotes.problems.includes(item.id)} className={`${button} flex items-center gap-2 ${p.myVotes.problems.includes(item.id) ? 'bg-amber-100' : ''}`} onClick={() => act(item.id, () => p.onVote(item.id, false))}><ThumbsUp size={16} />{p.myVotes.problems.includes(item.id) ? 'Supported' : 'Support'} · {item.upvotes}</button>
               <SquadJoin joined={p.myVotes.squads.includes(item.id)} disabled={busy !== null} initialSkill={p.profile?.tags?.[0]} onChange={async skill => { if (!p.profile) { p.onJoin(); throw new Error("Join the community first, then choose your squad."); } await p.onVote(item.id, true, p.profile.name, skill); }} />
@@ -236,8 +259,9 @@ export function CommunityView(p: Props) {
         {!filtered.length && <div className="bg-white rounded-2xl border p-8 text-center"><h2 className="font-bold text-xl">{p.problems.length ? 'No matching challenges' : 'What should we build together?'}</h2><p className="mt-2 text-stone-600">{p.problems.length ? 'Try another search or sector.' : 'Share the first challenge for the community to explore.'}</p></div>}
       </>}
       {view === 'sectors' && <SuggestSector />}
-      {view === 'sectors' && <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">{p.categories.map(item => <article key={item.name} className="bg-white border-2 rounded-2xl p-5"><h2 className="text-xl font-bold">{item.name}</h2><p className="text-sm text-stone-600 my-4">{item.description}</p><button disabled={busy !== null} aria-pressed={p.myVotes.categories.includes(item.name)} className={button} onClick={() => act(item.name, () => p.onVoteCategory(item.name))}>{p.myVotes.categories.includes(item.name) ? 'Supported' : 'Support sector'} · {item.upvotes}</button></article>)}</div>}
-      {view === 'trustees' && <><p className="text-sm text-stone-600 mb-4">Meet the nominated trustees. Support here is an endorsement; election ballots appear separately when open.</p><div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">{p.trustees.map(item => <article key={item.id} className="bg-white border-2 rounded-2xl p-5"><p className="text-xs">Seat {item.seatNumber}</p><h2 className="text-xl font-bold">{item.name}</h2><p>{item.titleOrOrg}</p><p className="text-sm text-stone-600 my-4">{item.bio}</p><button className={button} disabled={busy !== null} aria-pressed={p.myVotes.trustees.includes(item.id)} onClick={() => act(item.id, () => p.onVoteTrustee(item.id))}>{p.myVotes.trustees.includes(item.id) ? 'Endorsed' : 'Endorse'} · {item.votes}</button></article>)}</div>{!p.trustees.length && <p>No trustees have been nominated yet.</p>}</>}
+      {view === 'sectors' && !p.categories.length && <p className="text-sm text-stone-600">No sectors yet. Suggest one above and the host will review it.</p>}
+      {view === 'sectors' && <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">{p.categories.map(item => <article key={item.name} className="bg-white border-2 rounded-2xl p-5"><h2 className="text-xl font-bold">{item.name}</h2><p className="text-sm text-stone-600 my-4">{item.description}</p><button disabled={busy !== null} aria-pressed={p.myVotes.categories.includes(item.name)} className={button} onClick={() => act(item.name, () => p.onVoteCategory(item.name))}>{p.myVotes.categories.includes(item.name) ? 'Supported' : 'Support'} · {item.upvotes}</button></article>)}</div>}
+      {view === 'trustees' && <><p className="text-sm text-stone-600 mb-4">Nominated for the twelve statutory trustee seats.</p><div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">{p.trustees.map(item => <article key={item.id} className="bg-white border-2 rounded-2xl p-5"><p className="text-xs">Seat {item.seatNumber}</p><h2 className="text-xl font-bold">{item.name}</h2><p>{item.titleOrOrg}</p><p className="text-sm text-stone-600 my-4">{item.bio}</p><button className={button} disabled={busy !== null} aria-pressed={p.myVotes.trustees.includes(item.id)} onClick={() => act(item.id, () => p.onVoteTrustee(item.id))}>{p.myVotes.trustees.includes(item.id) ? 'Supported' : 'Support'} · {item.votes}</button></article>)}</div>{!p.trustees.length && <p>No trustees have been nominated yet.</p>}</>}
     </main>
     <footer className="text-center text-xs text-stone-600 p-6">Tin City Founders · Serious ambition. Serious collaboration.</footer>
     <SeamlessProblemWizard isOpen={submitOpen} onClose={() => setSubmitOpen(false)} onSubmit={p.onSubmit} currentProfile={p.profile} categories={p.categories} />

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getInitials } from '../utils/format';
 import { AttendeeProfile } from '../types';
 import { X, ArrowRight } from 'lucide-react';
 
@@ -103,12 +104,6 @@ export const FounderCheckInModal: React.FC<FounderCheckInModalProps> = ({
     finally { setBusy(false); }
   };
 
-  const getInitials = (n: string) => {
-    if (!n.trim()) return 'TC';
-    const parts = n.trim().split(' ');
-    if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-    return n.slice(0, 2).toUpperCase();
-  };
 
   return (
     // Dismissible by backdrop and Escape. This modal used to be forced open over

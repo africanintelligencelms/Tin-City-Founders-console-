@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { lagosDate } from '../utils/format';
 import type { VotingRound } from '../types';
 
 export function useRoundExpired(round: VotingRound) {
@@ -19,7 +20,7 @@ export function RoundDeadline({ round }: { round: VotingRound }) {
   const minutes = Math.max(0, Math.ceil((Date.parse(round.endsAt) - now) / 60000));
   const days = Math.floor(minutes / 1440);
   const hours = Math.floor(minutes % 1440 / 60);
-  const formatted = new Intl.DateTimeFormat('en-NG', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Lagos' }).format(new Date(round.endsAt));
+  const formatted = lagosDate(round.endsAt, 'datetime');
   return <div className="text-sm mt-2">
     <p className="font-bold">{round.status !== 'open' ? 'Voting closed' : expired ? 'Voting has ended · confirming results' : `Closes in ${days ? `${days}d ` : ''}${hours}h ${minutes % 60}m`}</p>
     <p className="text-xs opacity-75">Deadline: {formatted} WAT (Lagos)</p>

@@ -1,10 +1,9 @@
 import React from 'react';
+import { lagosDate } from '../utils/format';
 import { Star } from 'lucide-react';
 import type { Spotlight } from '../types';
 
-const when = (value?: number) => value
-  ? new Intl.DateTimeFormat('en-NG', { dateStyle: 'medium', timeZone: 'Africa/Lagos' }).format(new Date(value))
-  : '';
+const when = (value?: number) => (value ? lagosDate(value) : '');
 
 // The member's details are read from the spotlight record, never looked up in
 // the directory: a past spotlight has to keep reading as it did that week even

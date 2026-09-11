@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getInitials } from '../utils/format';
 import { AttendeeProfile } from '../types';
 import { Users, Search, MapPin, Lightbulb, Sparkles, UserPlus, CheckCircle } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
@@ -44,12 +45,6 @@ export const AttendeeDirectory: React.FC<AttendeeDirectoryProps> = ({
     return matchesSearch && matchesTag;
   });
 
-  const getInitials = (n: string) => {
-    if (!n) return 'TC';
-    const parts = n.trim().split(' ');
-    if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-    return n.slice(0, 2).toUpperCase();
-  };
 
   const handleSayHi = (attendee: AttendeeProfile) => {
     if (!connectedIds.includes(attendee.id)) {

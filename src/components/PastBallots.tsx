@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { plural, lagosDate } from '../utils/format';
 import type { RoundKind, RoundResultEntry } from '../types';
 
 interface PastRound {
@@ -6,9 +7,7 @@ interface PastRound {
   ballotsCast: number; results: RoundResultEntry[]; squadMembersCount: number;
 }
 const labels = { problem: 'Challenges', category: 'Sectors', trustee: 'Trustees', member: 'Spotlight' };
-const date = (value: number) => new Intl.DateTimeFormat('en-NG', {
-  dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Lagos'
-}).format(new Date(value));
+const date = (value: number) => lagosDate(value, 'datetime');
 
 export const PastBallots: React.FC<{ onOpen: (id: string) => void }> = ({ onOpen }) => {
   const [rounds, setRounds] = useState<PastRound[]>([]);
@@ -46,7 +45,7 @@ export const PastBallots: React.FC<{ onOpen: (id: string) => void }> = ({ onOpen
         <p className="text-xs font-bold text-emerald-800">{labels[round.kind]} · Closed</p>
         <h3 className="text-xl font-bold my-2">{round.title}</h3>
         <p className="text-xs text-stone-600">Opened: {date(round.openedAt)}<br />Closed: {round.closedAt ? date(round.closedAt) : 'Date unavailable'}</p>
-        <p className="text-sm my-3">{round.ballotsCast} ballots · {round.squadMembersCount} squad signups</p>
+        <p className="text-sm my-3">{plural(round.ballotsCast, 'ballot')} · {plural(round.squadMembersCount, 'squad signup')}</p>
         <p className="text-sm mb-4">{!round.ballotsCast ? 'No ballots cast.' : `${leaders.length > 1 ? 'Tied for first' : 'Top choice'}: ${leaders.map(r => r.label).join('; ')}`}</p>
         <a href={`/?mode=community&round=${encodeURIComponent(round.id)}`} onClick={e => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) { e.preventDefault(); onOpen(round.id); } }} className="inline-block bg-[#0D4734] text-white rounded-xl px-4 py-2 font-bold text-sm">View results and squads</a>
       </article>;
