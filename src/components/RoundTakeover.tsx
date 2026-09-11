@@ -274,7 +274,8 @@ export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
       {/* Sticky submit bar */}
       <div className={`${embedded ? 'mt-6 rounded-xl' : 'fixed bottom-0 inset-x-0'} bg-[#071912]/95 backdrop-blur border-t border-white/10 px-4 py-3`}>
         <div className="max-w-lg mx-auto">
-        <RoundDeadline round={round} />
+          {/* The countdown already ticks at the top of this same card. Two live
+              clocks on one ballot, 400px apart, read as two deadlines. */}
           <button
             type="button"
             onClick={submit}

@@ -1234,6 +1234,7 @@ export default function App() {
               syncStatus={syncStatus} onReconnect={handleManualReconnect}
               spotlight={spotlight} spotlightHistory={spotlightHistory}
               isFirstVisit={isFirstVisit} onRecover={openRecovery}
+              ballotCast={myRoundBallot.hasVoted && myRoundBallot.roundId === (roomSessionState.activeRound?.id ?? null)}
               mixerLive={!!roomSessionState.mixerLive}
             />
           ) : (<>

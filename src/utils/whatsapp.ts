@@ -1,4 +1,5 @@
 import type { VotingRound, MyRoundBallot, RoundOption } from '../types';
+import { lagosDate } from './format';
 
 export type BroadcastKind = 'launch' | 'reminder' | 'results';
 const clean = (value: string) => value.replace(/[\r\n*_~`]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -9,7 +10,7 @@ export function voterShareText(round: VotingRound, ballot: MyRoundBallot, origin
   const choices = round.options.filter(o => ballot.selections.includes(o.id)).map(o => clean(o.label));
   const closed = round.status !== 'open' || (!!round.endsAt && now >= Date.parse(round.endsAt));
   const invitation = closed ? 'Voting has ended. See the ballot and results:' : round.endsAt
-    ? `Cast your vote before ${new Intl.DateTimeFormat('en-NG', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Lagos' }).format(new Date(round.endsAt))} WAT (Lagos):`
+    ? `Cast your vote before ${lagosDate(round.endsAt, 'datetime')} WAT (Lagos):`
     : 'Cast your vote while voting is open:';
   return `✅ I voted in "${clean(round.title)}" in the TCF Community Pulse.${choices.length ? `\nMy choice${choices.length > 1 ? 's' : ''}: ${choices.join('; ')}` : ''}\n\n${round.ballotsCast} member${round.ballotsCast === 1 ? ' has' : 's have'} voted.\n${invitation}\n👉 ${link}`;
 }
@@ -29,7 +30,7 @@ export function roundBroadcast(round: VotingRound, kind: BroadcastKind, origin: 
   const link = `${new URL(origin).origin}/?mode=community&round=${encodeURIComponent(round.id)}`;
   const title = clean(round.title);
   const deadline = round.endsAt
-    ? new Intl.DateTimeFormat('en-NG', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Lagos' }).format(new Date(round.endsAt)) + ' WAT (Lagos)'
+    ? lagosDate(round.endsAt, 'datetime') + ' WAT (Lagos)'
     : 'The host will close voting manually';
   const expired = round.status !== 'open' || (!!round.endsAt && now >= Date.parse(round.endsAt));
   if (kind !== 'results' && expired) throw new Error('Voting has ended. Use the results message once the final tally is available.');
