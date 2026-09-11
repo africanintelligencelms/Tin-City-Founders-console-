@@ -11,6 +11,14 @@ export interface AttendeeProfile {
   whatsapp?: string;
   organization?: string;
   linkedin?: string;
+  // Instagram, a website, anything the member gave as their public link. Kept
+  // separate from linkedin, which is validated to linkedin.com/in/ only.
+  link?: string;
+  // "Building / pre-launch", "Growing / established" — how the directory filters.
+  stage?: string;
+  // false = community only. The member is fully present in the app; the flag
+  // tells the host not to carry their details OUT of it (see the broadcast deck).
+  listed?: boolean;
   avatarColor?: string;
   checkedInAt?: string;
 }
