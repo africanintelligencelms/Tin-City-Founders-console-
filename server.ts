@@ -1194,12 +1194,14 @@ app.post("/api/session/react", (req, res) => {
 
 // ----------------- HOST FAILSAFE: STATE EXPORT -----------------
 
-// The whole room as a file, for a host who needs to move it. On a platform with
-// no persistent disk (Render free tier) a restart wipes the room; this is the
-// only way to carry the evening onto the backup laptop. The response body is
+// The whole room as a file, for a host who needs to move it. This was written
+// when production had no persistent disk and a restart wiped the evening; the
+// VPS has a real disk and .data/room_state.json survives reboots, so the export
+// is no longer the only copy. It is still the way to carry a room onto a backup
+// laptop if the box or its network fails mid-event. The response body is
 // byte-for-byte what persistState() writes, so the download can be dropped in
-// as .data/room_state.json and the laptop picks up exactly where the cloud
-// stopped. Host-gated: the file carries every attendee record in the room.
+// as .data/room_state.json and the laptop picks up where the server stopped.
+// Host-gated: the file carries every attendee record, including phone numbers.
 app.get("/api/admin/state", requireHost, (_req, res) => {
   const snapshot = buildStateSnapshot();
   // 2026-09-04T15-30-00 — colons are illegal in filenames on Windows.
