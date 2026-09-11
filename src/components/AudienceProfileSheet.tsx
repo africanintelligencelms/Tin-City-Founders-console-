@@ -13,6 +13,15 @@ interface AudienceProfileSheetProps {
   onSaveProfile: (profile: AttendeeProfile) => Promise<void>;
 }
 
+const STAGES = [
+  'Just an idea',
+  'Building / pre-launch',
+  'Launched / early traction',
+  'Growing / established',
+  'Student / exploring',
+  'I invest in or support founders'
+];
+
 export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
   isOpen,
   currentProfile,
@@ -25,6 +34,8 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
   const [avatarColor, setAvatarColor] = useState('#0D4734');
   const [organization, setOrganization] = useState('');
   const [linkedin, setLinkedin] = useState('');
+  const [link, setLink] = useState('');
+  const [stage, setStage] = useState('');
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [whatsapp, setWhatsapp] = useState('');
   const [error, setError] = useState('');
@@ -43,6 +54,8 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
     setAvatarColor(currentProfile?.avatarColor || '#0D4734');
     setOrganization(currentProfile?.organization || '');
     setLinkedin(currentProfile?.linkedin || '');
+    setLink(currentProfile?.link || '');
+    setStage(currentProfile?.stage || '');
     setConfirmSignOut(false);
     setWhatsapp(currentProfile?.whatsapp || '');
     setError('');
@@ -83,6 +96,7 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
     await onSaveProfile({
       ...currentProfile,
       name: name.trim(), avatarColor, organization: organization.trim(), linkedin: linkedin.trim(),
+      link: link.trim(), stage,
       whatsapp: normalizePhone(whatsapp),
       title: title.trim(),
       tags: tags.map(t => t.trim()).filter(Boolean),
@@ -124,7 +138,14 @@ export const AudienceProfileSheet: React.FC<AudienceProfileSheetProps> = ({
               <fieldset><legend className="text-sm font-bold mb-2">Avatar colour</legend><div className="flex flex-wrap gap-2">{['#0D4734','#E5A93C','#BF7E1D','#166E52','#C85A28','#0F6B5C'].map((color, i) => <button key={color} type="button" aria-label={['Forest green','Plateau gold','Ochre','Emerald','Terracotta','Teal'][i]} aria-pressed={avatarColor === color} onClick={() => setAvatarColor(color)} style={{backgroundColor:color}} className="w-11 h-11 rounded-xl border-2 border-stone-500 text-white">{avatarColor === color ? '✓' : ''}</button>)}</div></fieldset>
               <label className="block text-sm font-bold">Organization / venture<input aria-label="Organization / venture" maxLength={160} value={organization} onChange={e => setOrganization(e.target.value)} className="block w-full border rounded-xl p-3 mt-1" /></label>
               <label className="block text-sm font-bold">LinkedIn profile<input aria-label="LinkedIn profile" placeholder="https://www.linkedin.com/in/your-name" value={linkedin} onChange={e => setLinkedin(e.target.value)} className="block w-full border rounded-xl p-3 mt-1" /></label>
-              <p className="text-xs text-stone-600">Your organization and LinkedIn profile appear in the member directory.</p>
+              <label className="block text-sm font-bold">Instagram or website<input aria-label="Instagram or website" maxLength={300} placeholder="instagram.com/yourhandle" value={link} onChange={e => setLink(e.target.value)} className="block w-full border rounded-xl p-3 mt-1" /></label>
+              <label className="block text-sm font-bold">Stage
+                <select aria-label="Stage" value={stage} onChange={e => setStage(e.target.value)} className="block w-full border rounded-xl p-3 mt-1 bg-white">
+                  <option value="">Not saying</option>
+                  {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </label>
+              <p className="text-xs text-stone-600">Your organization, links and stage appear in the member directory.</p>
             </section>
 
             <section className="space-y-2 bg-white p-4 rounded-2xl border border-stone-300">

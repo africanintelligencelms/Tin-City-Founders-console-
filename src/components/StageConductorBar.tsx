@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import {
   RoomPhase, RoomSessionState, ToastNotification, RoundKind,
-  PlateauProblem, CategoryInfo, TrusteeCandidate, VotingRound, RoundOption
+  PlateauProblem, CategoryInfo, TrusteeCandidate, VotingRound, RoundOption, AttendeeProfile
 } from '../types';
 import { RoundDeadline } from './RoundDeadline';
 import { sounds } from '../utils/soundEffects';
@@ -36,6 +36,8 @@ interface StageConductorBarProps {
   onSectorRequest?: SectorRequest;
   onSaveSector?: (original: string | null, name: string, description: string) => Promise<void>;
   trusteeCandidates?: TrusteeCandidate[];
+  // Needed by the broadcast deck to spot community-only members in a squad list.
+  attendees?: AttendeeProfile[];
   // Most recently archived round — powers the "Top 3 from last round" shortcut.
   lastRound?: VotingRound | null;
   // Every archived round (newest first) — powers "New since last round", which
@@ -126,6 +128,7 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
   onSaveSector,
   onSectorRequest,
   trusteeCandidates = [],
+  attendees = [],
   lastRound = null,
   roundHistory = []
 }) => {
@@ -543,7 +546,7 @@ export const StageConductorBar: React.FC<StageConductorBarProps> = ({
             {/* ---------------- Voting Round Lifecycle ---------------- */}
             <a href="/?mode=community&view=history" className="inline-block m-3 px-4 py-2 rounded-xl border border-emerald-600 text-white text-sm font-bold">Past ballots · results and squads</a>
             {onSaveSector && onSectorRequest && <SectorManager sectors={categories} onSave={onSaveSector} request={onSectorRequest} />}
-            <WhatsAppBroadcastDeck rounds={[...(activeRound ? [activeRound] : []), ...roundHistory, ...(lastRound ? [lastRound] : [])].filter((r, i, all) => all.findIndex(x => x.id === r.id) === i)} />
+            <WhatsAppBroadcastDeck attendees={attendees} rounds={[...(activeRound ? [activeRound] : []), ...roundHistory, ...(lastRound ? [lastRound] : [])].filter((r, i, all) => all.findIndex(x => x.id === r.id) === i)} />
             {activeRound?.endsAt && <div className="p-3 text-white"><RoundDeadline round={activeRound} />{activeRound.status === 'open' && onExtendRound && <button disabled={isRoundBusy} onClick={() => runRoundAction(onExtendRound)} className="mt-2 px-3 py-2 border border-emerald-500 rounded-xl text-xs">Extend deadline by 24 hours</button>}</div>}
             {(onOpenRound || onCloseRound) && (
               <div className="mt-4 pt-4 border-t border-emerald-800/40">
