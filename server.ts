@@ -4,7 +4,7 @@ import path from "path";
 import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
-import type { SquadMember } from "./src/types";
+import type { SquadMember, Spotlight, SpotlightSource } from "./src/types";
 import { normalizePhone } from "./src/utils/phone";
 
 const app = express();
@@ -755,7 +755,7 @@ type RoomPhase = "welcome" | "problem_pitch" | "voting" | "trustee_election" | "
 // -------------------------------------------------------------
 // Voting Rounds — host-driven ballots layered on top of phases
 // -------------------------------------------------------------
-type RoundKind = "problem" | "category" | "trustee";
+type RoundKind = "problem" | "category" | "trustee" | "member";
 type RoundStatus = "open" | "revealed";
 
 interface RoundOption {
@@ -804,6 +804,11 @@ let activeRound: VotingRound | null = null;
 let roundBallots: RoundBallot[] = [];
 // Completed rounds, newest first. Retain summaries so shared round links stay valid.
 let roundHistory: VotingRound[] = [];
+
+// The weekly spotlight. One member at a time, decided either by the host picking
+// or by a member ballot closing; both produce the same record.
+let activeSpotlight: Spotlight | null = null;
+let spotlightHistory: Spotlight[] = [];
 let revealTimer: NodeJS.Timeout | null = null;
 
 interface RoomSessionState {
@@ -849,6 +854,8 @@ try {
     }
     if (parsed.roundBallots && Array.isArray(parsed.roundBallots)) roundBallots = parsed.roundBallots;
     if (parsed.roundHistory && Array.isArray(parsed.roundHistory)) roundHistory = parsed.roundHistory;
+    if (parsed.activeSpotlight && typeof parsed.activeSpotlight === "object") activeSpotlight = parsed.activeSpotlight;
+    if (parsed.spotlightHistory && Array.isArray(parsed.spotlightHistory)) spotlightHistory = parsed.spotlightHistory;
     if (parsed.activeRound && typeof parsed.activeRound === "object") activeRound = parsed.activeRound;
 
     // A round that was mid-reveal when the process died must not come back as a
@@ -899,6 +906,8 @@ function buildStateSnapshot() {
     activeRound,
     roundBallots,
     roundHistory,
+    activeSpotlight,
+    spotlightHistory,
     memberContacts,
     lastSaved: Date.now()
   };
@@ -980,7 +989,7 @@ function broadcastStateUpdate(actionType: string, summary: string, author = "Roo
 // SSE Connection Endpoint
 // Every later API request checks the deadline, including votes and new SSE connections.
 // This prevents late ballots even between background ticks.
-app.use('/api', (_req, _res, next) => { expireRoundIfNeeded(); next(); });
+app.use('/api', (_req, _res, next) => { expireRoundIfNeeded(); expireSpotlightIfNeeded(); next(); });
 
 app.get("/api/live/stream", (req, res) => {
   res.writeHead(200, {
@@ -1283,7 +1292,7 @@ app.get("/api/admin/trustees", requireHost, (_req, res) => {
 
 // ----------------- VOTING ROUND ENDPOINTS -----------------
 
-const ROUND_KINDS: RoundKind[] = ["problem", "category", "trustee"];
+const ROUND_KINDS: RoundKind[] = ["problem", "category", "trustee", "member"];
 // Three minutes, not thirty seconds. On venue wifi a phone that locks or drops
 // during the reveal needs a wide window to come back and still see the result
 // on its own screen; the host can always cut it short with "Back to Room".
@@ -1302,6 +1311,13 @@ function buildRoundOptions(kind: RoundKind, optionIds?: string[]): RoundOption[]
     return Object.entries(categoriesStore)
       .filter(([name]) => !wanted || wanted.has(name))
       .map(([name, data]) => ({ id: name, label: name, sublabel: data.description }));
+  }
+  if (kind === "member") {
+    // Community-only members stay eligible. What they declined was their details
+    // leaving the platform; a spotlight inside it is the thing they signed up to.
+    return attendees
+      .filter(a => !wanted || wanted.has(a.id))
+      .map(a => ({ id: a.id, label: a.name, sublabel: a.organization || a.title || a.stage || "" }));
   }
   return trusteeCandidates
     .filter(c => !wanted || wanted.has(c.id))
@@ -1499,6 +1515,8 @@ function closeActiveRound(expired: boolean) {
   syncRoundToSession();
   persistState();
 
+  promoteSpotlightFromRound(activeRound);
+
   broadcastSSE("ROUND_CLOSED", { round: activeRound });
   broadcastStateUpdate(
     "round_closed",
@@ -1506,6 +1524,105 @@ function closeActiveRound(expired: boolean) {
     "Host Conductor"
   );
 
+}
+
+// ----------------- WEEKLY SPOTLIGHT -----------------
+
+const SPOTLIGHT_DEFAULT_DAYS = 7;
+
+// A spotlight COPIES the member's details rather than referencing them. The
+// history is a record of what was true that week — it has to keep reading
+// correctly after the member edits their profile, and has to survive them
+// leaving the directory entirely.
+function spotlightFrom(member: ServerAttendee, source: SpotlightSource, extra: Partial<Spotlight> = {}): Spotlight {
+  return {
+    id: `spot-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`,
+    memberId: member.id,
+    name: member.name,
+    organization: member.organization || "",
+    stage: member.stage || "",
+    bio: member.bio || "",
+    giveAsk: member.giveAsk || "",
+    link: member.link || "",
+    location: member.location || "",
+    listed: member.listed !== false,
+    source,
+    startedAt: Date.now(),
+    ...extra
+  };
+}
+
+// Retiring is append-only: a spotlight that ran is part of the record whether it
+// ended on its clock, was replaced, or was cleared by the host.
+function retireSpotlight() {
+  if (!activeSpotlight) return;
+  spotlightHistory.unshift({ ...activeSpotlight, endedAt: Date.now() });
+  activeSpotlight = null;
+}
+
+function expireSpotlightIfNeeded() {
+  if (activeSpotlight?.endsAt && Date.now() >= Date.parse(activeSpotlight.endsAt)) {
+    retireSpotlight();
+    persistState();
+    broadcastSSE("SPOTLIGHT_UPDATED", { spotlight: null });
+  }
+}
+
+function startSpotlight(next: Spotlight) {
+  retireSpotlight();
+  activeSpotlight = next;
+  persistState();
+  broadcastSSE("SPOTLIGHT_UPDATED", { spotlight: activeSpotlight });
+  broadcastStateUpdate("spotlight_started", `${next.name} is this week's spotlight`, next.name);
+}
+
+app.get("/api/spotlight", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ success: true, spotlight: activeSpotlight, history: spotlightHistory.slice(0, 30) });
+});
+
+// The picked path. The host names someone; no ballot involved.
+app.post("/api/spotlight", requireHost, (req, res) => {
+  const { memberId, note, days } = req.body || {};
+  const member = attendees.find(a => a.id === memberId);
+  if (!member) return res.status(404).json({ error: "No member with that id. Refresh the directory and try again." });
+  if (note !== undefined && (typeof note !== "string" || note.length > 400)) return res.status(400).json({ error: "Keep the note within 400 characters." });
+  const runFor = days === undefined ? SPOTLIGHT_DEFAULT_DAYS : Number(days);
+  if (!Number.isFinite(runFor) || runFor <= 0 || runFor > 90) return res.status(400).json({ error: "A spotlight runs between 1 and 90 days." });
+
+  startSpotlight(spotlightFrom(member, "picked", {
+    note: typeof note === "string" ? note.trim() : "",
+    endsAt: new Date(Date.now() + runFor * 86400000).toISOString()
+  }));
+  res.json({ success: true, spotlight: activeSpotlight });
+});
+
+app.delete("/api/spotlight", requireHost, (_req, res) => {
+  if (!activeSpotlight) return res.status(409).json({ error: "There is no spotlight running." });
+  retireSpotlight();
+  persistState();
+  broadcastSSE("SPOTLIGHT_UPDATED", { spotlight: null });
+  res.json({ success: true, spotlight: null });
+});
+
+// The voted path. A closing member ballot promotes its winner.
+//
+// A tie promotes NOBODY. Breaking it by ballot order would invent a result the
+// vote did not produce, and this record is meant to be citable months later.
+// The host picks between the tied members with POST /api/spotlight instead.
+function promoteSpotlightFromRound(round: VotingRound) {
+  if (round.kind !== "member" || !round.results?.length || !round.ballotsCast) return;
+  const sorted = [...round.results].sort((a, b) => b.votes - a.votes);
+  const top = sorted.filter(r => r.votes === sorted[0].votes);
+  if (!sorted[0].votes || top.length !== 1) return;
+  const member = attendees.find(a => a.id === top[0].optionId);
+  if (!member) return;
+  const runFor = round.durationHours ? Math.max(1, Math.round(round.durationHours / 24)) : SPOTLIGHT_DEFAULT_DAYS;
+  startSpotlight(spotlightFrom(member, "voted", {
+    roundId: round.id,
+    votes: top[0].votes,
+    endsAt: new Date(Date.now() + runFor * 86400000).toISOString()
+  }));
 }
 
 function expireRoundIfNeeded() {
@@ -2530,5 +2647,6 @@ async function startServer() {
 }
 
 expireRoundIfNeeded();
-setInterval(expireRoundIfNeeded, 1000).unref();
+expireSpotlightIfNeeded();
+setInterval(() => { expireRoundIfNeeded(); expireSpotlightIfNeeded(); }, 1000).unref();
 startServer();

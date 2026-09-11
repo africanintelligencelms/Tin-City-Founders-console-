@@ -5,7 +5,7 @@ interface PastRound {
   id: string; title: string; kind: RoundKind; openedAt: number; closedAt?: number;
   ballotsCast: number; results: RoundResultEntry[]; squadMembersCount: number;
 }
-const labels = { problem: 'Challenges', category: 'Sectors', trustee: 'Trustees' };
+const labels = { problem: 'Challenges', category: 'Sectors', trustee: 'Trustees', member: 'Spotlight' };
 const date = (value: number) => new Intl.DateTimeFormat('en-NG', {
   dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Lagos'
 }).format(new Date(value));

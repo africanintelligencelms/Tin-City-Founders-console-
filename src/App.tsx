@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { NavigationTab, PlateauProblem, AttendeeProfile, ToastNotification, RoomSessionState } from './types';
-import type { TrusteeCandidate, CategoryInfo, MyVotes, MyRoundBallot, RoundKind, VotingRound } from './types';
+import type { TrusteeCandidate, CategoryInfo, MyVotes, MyRoundBallot, RoundKind, VotingRound, Spotlight } from './types';
 import { CommunityView } from './components/CommunityView';
 import { Header } from './components/Header';
 import { ProblemVoting } from './components/ProblemVoting';
@@ -17,6 +17,8 @@ import { RoomLiveAnalyticsModal } from './components/RoomLiveAnalyticsModal';
 import { AudienceParticipationView } from './components/AudienceParticipationView';
 import { AudienceProfileSheet } from './components/AudienceProfileSheet';
 import { StageConductorBar } from './components/StageConductorBar';
+import { SpotlightCard } from './components/SpotlightCard';
+import { SpotlightPicker } from './components/SpotlightPicker';
 import { captureHostKeyFromUrl, hostFetch, verifyHostKey } from './utils/hostKey';
 
 export default function App() {
@@ -102,6 +104,41 @@ export default function App() {
   // Every archived round the server still holds (newest first). The host's
   // ballot picker uses it to work out which options have never been voted on.
   const [roundHistory, setRoundHistory] = useState<VotingRound[]>([]);
+
+  // The weekly spotlight, decided by the host naming someone or by a member
+  // ballot closing. Both arrive here the same way.
+  const [spotlight, setSpotlight] = useState<Spotlight | null>(null);
+  const [spotlightHistory, setSpotlightHistory] = useState<Spotlight[]>([]);
+  const refreshSpotlight = async () => {
+    try {
+      const res = await fetch('/api/spotlight');
+      const data = await res.json();
+      setSpotlight(data.spotlight ?? null);
+      setSpotlightHistory(Array.isArray(data.history) ? data.history : []);
+    } catch (e) {
+      // Offline: SPOTLIGHT_UPDATED will fill this in when the link comes back.
+    }
+  };
+  useEffect(() => { refreshSpotlight(); }, []);
+
+  const handleSetSpotlight = async (memberId: string, note: string, days: number) => {
+    const res = await hostFetch('/api/spotlight', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId, note, days })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not set the spotlight.');
+    setSpotlight(data.spotlight);
+    refreshSpotlight();
+  };
+
+  const handleClearSpotlight = async () => {
+    const res = await hostFetch('/api/spotlight', { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not clear the spotlight.');
+    setSpotlight(null);
+    refreshSpotlight();
+  };
 
   const handleToggleAudienceMode = (enableAudience: boolean) => {
     // Without a valid host key there is no way out of audience mode.
@@ -548,6 +585,17 @@ export default function App() {
                 ? { ...prev, activeRound: { ...prev.activeRound, ballotsCast: data.ballotsCast } }
                 : prev
             );
+          } catch (err) {}
+        });
+
+        eventSource.addEventListener('SPOTLIGHT_UPDATED', (e: MessageEvent) => {
+          if (isCancelled) return;
+          try {
+            const data = JSON.parse(e.data);
+            setSpotlight(data.spotlight ?? null);
+            // The history only changes when one ends, so refetch rather than
+            // reconstructing it on the client and risking a divergent list.
+            refreshSpotlight();
           } catch (err) {}
         });
 
@@ -1167,6 +1215,8 @@ export default function App() {
       {audienceOnly ? (
         <div className={`min-h-screen ${!isVotingOpen ? 'bg-[#FFF0E6]' : 'bg-[#FAF6EE]'} text-stone-900 transition-colors duration-300`}>
           {!isMixerMode ? (
+            <>
+            <SpotlightCard spotlight={spotlight} history={spotlightHistory} />
             <CommunityView
               problems={problems} attendees={attendees} categories={liveCategories}
               trustees={trusteeCandidates} profile={currentProfile} myVotes={myVotes}
@@ -1178,6 +1228,7 @@ export default function App() {
               onHost={isHostVerified ? () => handleToggleAudienceMode(false) : undefined}
               syncStatus={syncStatus} onReconnect={handleManualReconnect}
             />
+            </>
           ) : (<>
           <div className="bg-[#0D4734] text-white px-4 py-3 flex items-center justify-between">
             <span className="text-sm font-bold">Live mixer</span>
@@ -1280,6 +1331,13 @@ export default function App() {
               lastRound={lastRound}
               roundHistory={roundHistory}
             />
+            <SpotlightPicker
+              attendees={attendees}
+              spotlight={spotlight}
+              onPick={handleSetSpotlight}
+              onClear={handleClearSpotlight}
+            />
+            <SpotlightCard spotlight={spotlight} history={spotlightHistory} />
           </div>
 
           {/* Main View Area */}

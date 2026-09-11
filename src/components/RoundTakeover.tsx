@@ -19,7 +19,8 @@ interface RoundTakeoverProps {
 const KIND_LABEL: Record<VotingRound['kind'], string> = {
   problem: 'Problem Ballot',
   category: 'Sector Ballot',
-  trustee: 'Trustee Ballot'
+  trustee: 'Trustee Ballot',
+  member: 'Spotlight Ballot'
 };
 
 export const RoundTakeover: React.FC<RoundTakeoverProps> = ({
