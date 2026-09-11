@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
+import { useCapped, ShowMore } from './ShowMore';
 import { getInitials } from '../utils/format';
 import { AttendeeProfile } from '../types';
-import { Users, Search, MapPin, Lightbulb, Sparkles, UserPlus, CheckCircle } from 'lucide-react';
+import { Users, Search, MapPin, Lightbulb, Sparkles, UserPlus, CheckCircle, ExternalLink } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
 
 interface AttendeeDirectoryProps {
@@ -44,6 +45,8 @@ export const AttendeeDirectory: React.FC<AttendeeDirectoryProps> = ({
 
     return matchesSearch && matchesTag;
   });
+  // Filtering above runs over every attendee; only rendering is capped.
+  const capped = useCapped<AttendeeProfile>(filteredAttendees, `${searchQuery}|${selectedTagFilter}`);
 
 
   const handleSayHi = (attendee: AttendeeProfile) => {
@@ -58,7 +61,11 @@ export const AttendeeDirectory: React.FC<AttendeeDirectoryProps> = ({
   return (
     <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 py-6">
       {/* Top Banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 bg-white border-4 border-[#09251B] rounded-3xl p-6 sm:p-8 shadow-[8px_8px_0px_0px_#09251B]">
+      {/* The community screen already prints the member count and carries a join
+          button in its header, so this banner was a second count, a second H1
+          and a fifth route to check-in on one screen. The host console still
+          gets it — that surface has no other heading. */}
+      {!community && <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 bg-white border-4 border-[#09251B] rounded-3xl p-6 sm:p-8 shadow-[8px_8px_0px_0px_#09251B]">
         <div>
           <div className="inline-flex items-center gap-1.5 bg-[#E5A93C] text-[#09251B] border-2 border-[#09251B] px-3 py-1 rounded-full text-xs font-display font-black tracking-wider uppercase mb-2 shadow-[2px_2px_0px_0px_#09251B]">
             <Users className="w-3.5 h-3.5" />
@@ -79,7 +86,7 @@ export const AttendeeDirectory: React.FC<AttendeeDirectoryProps> = ({
           <Sparkles className="w-4 h-4 fill-current" />
           <span>{currentProfile ? 'Edit My Profile & Tags' : '+ Check In As Founder'}</span>
         </button>
-      </div>
+      </div>}
 
       {/* Search & Tag Filter Bar */}
       <div className="space-y-3.5 mb-8">
@@ -145,8 +152,8 @@ export const AttendeeDirectory: React.FC<AttendeeDirectoryProps> = ({
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {filteredAttendees.map((attendee) => {
+        <><div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {capped.visible.map((attendee) => {
             const isMe = currentProfile?.id === attendee.id;
             const isConnected = connectedIds.includes(attendee.id);
 
@@ -230,8 +237,26 @@ export const AttendeeDirectory: React.FC<AttendeeDirectoryProps> = ({
                 {/* Card Footer Actions */}
                 <div className="pt-3 border-t border-[#09251B]/15 flex items-center justify-between gap-3">
                   <span className="text-[10px] font-mono text-[#09251B]/60">
-                    {community ? 'Community member' : `Checked in ${attendee.checkedInAt ? new Date(attendee.checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'recently'}`}
+                    {community
+                      ? (attendee.stage || 'Community member')
+                      : `Checked in ${attendee.checkedInAt ? new Date(attendee.checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'recently'}`}
                   </span>
+
+                  {/* In community mode these cards had no action at all: you
+                      could read 59 profiles and tap nothing. This shows only
+                      what the member published themselves — no contact details,
+                      and nothing new collected. */}
+                  {community && attendee.link && (
+                    <a
+                      href={attendee.link}
+                      target="_blank"
+                      rel="noopener noreferrer nofollow"
+                      className="text-xs font-display font-bold px-3.5 py-1.5 rounded-xl border border-[#0D4734]/30 bg-white hover:bg-[#EBF3EF] flex items-center gap-1.5 shrink-0"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      Visit
+                    </a>
+                  )}
 
                   {!isMe && !community && (
                     <button
@@ -260,6 +285,7 @@ export const AttendeeDirectory: React.FC<AttendeeDirectoryProps> = ({
             );
           })}
         </div>
+        <ShowMore hidden={capped.hidden} total={capped.total} noun="members" onMore={capped.showMore} onAll={capped.showAll} /></>
       )}
     </div>
   );
