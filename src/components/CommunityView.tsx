@@ -11,6 +11,7 @@ import { RoundDeadline } from './RoundDeadline';
 import { CommunityBallot } from './CommunityBallot';
 import { SpotlightCard } from './SpotlightCard';
 import { plural } from '../utils/format';
+import { useCapped, ShowMore } from './ShowMore';
 
 interface Props {
   problems: PlateauProblem[];
@@ -104,6 +105,8 @@ export function CommunityView(p: Props) {
   };
   const button = 'px-4 py-2.5 rounded-xl border border-[#0D4734]/25 text-sm font-bold hover:bg-[#EBF3EF] disabled:opacity-50';
   const filtered = p.problems.filter(item => (category === 'All' || item.category === category) && `${item.title} ${item.description} ${item.submittedBy}`.toLowerCase().includes(query.toLowerCase())).sort((a, b) => sort === 'votes' ? b.upvotes - a.upvotes : sort === 'squads' ? b.commitments - a.commitments : b.createdAt.localeCompare(a.createdAt));
+  // Filtering runs over every challenge; only rendering is capped.
+  const cappedProblems = useCapped<PlateauProblem>(filtered, `${query}|${category}|${sort}`);
 
   return <div className="min-h-screen bg-[#F6F3EC] text-[#09251B]">
     {/* One row, always. The old header wrapped to three on a phone because it
@@ -244,7 +247,7 @@ export function CommunityView(p: Props) {
           </details>
         </div>
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {filtered.map(item => <article key={item.id} className="bg-white border-2 border-[#09251B] rounded-2xl p-5 shadow-[3px_3px_0_#09251B] flex flex-col">
+          {cappedProblems.visible.map(item => <article key={item.id} className="bg-white border-2 border-[#09251B] rounded-2xl p-5 shadow-[3px_3px_0_#09251B] flex flex-col">
             <div className="flex flex-wrap gap-2 text-xs mb-3"><span className="bg-[#EBF3EF] rounded-lg px-2 py-1">{item.category}</span><span className="bg-amber-50 rounded-lg px-2 py-1">{item.status}</span></div>
             <h2 className="font-display font-black text-xl">{item.title}</h2><p className="text-sm text-stone-600 mt-3 line-clamp-3">{item.description}</p>
             <div className="flex flex-wrap gap-1 mt-4">{item.skillsNeeded.map(skill => <span key={skill} className="text-xs rounded-lg border px-2 py-1">{skill}</span>)}</div>
@@ -256,6 +259,7 @@ export function CommunityView(p: Props) {
             </div>
           </article>)}
         </div>
+        <ShowMore hidden={cappedProblems.hidden} total={cappedProblems.total} noun="challenges" onMore={cappedProblems.showMore} onAll={cappedProblems.showAll} />
         {!filtered.length && <div className="bg-white rounded-2xl border p-8 text-center"><h2 className="font-bold text-xl">{p.problems.length ? 'No matching challenges' : 'What should we build together?'}</h2><p className="mt-2 text-stone-600">{p.problems.length ? 'Try another search or sector.' : 'Share the first challenge for the community to explore.'}</p></div>}
       </>}
       {view === 'sectors' && <SuggestSector />}

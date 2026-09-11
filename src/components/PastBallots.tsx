@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { plural, lagosDate } from '../utils/format';
+import { useCapped, ShowMore } from './ShowMore';
 import type { RoundKind, RoundResultEntry } from '../types';
 
 interface PastRound {
@@ -27,6 +28,7 @@ export const PastBallots: React.FC<{ onOpen: (id: string) => void }> = ({ onOpen
     return () => controller.abort();
   }, [revision]);
   const filtered = rounds.filter(r => (kind === 'all' || r.kind === kind) && r.title.toLowerCase().includes(query.trim().toLowerCase()));
+  const capped = useCapped<PastRound>(filtered, `${query}|${kind}`, 8);
   return <section aria-label="Past ballots">
     <h2 className="text-2xl font-bold">Past ballots</h2>
     <p className="text-sm text-stone-600 mt-2 mb-5">Browse completed votes, final results and execution squads. Newest results appear first. Dates are in Nigerian time (WAT).</p>
@@ -38,7 +40,7 @@ export const PastBallots: React.FC<{ onOpen: (id: string) => void }> = ({ onOpen
     {loading && <p role="status">Loading past ballots…</p>}
     {error && <p role="alert" className="text-red-700">{error} Use Refresh to try again.</p>}
     {!loading && !error && !filtered.length && <p>{rounds.length ? 'No ballots match your search or filter.' : 'No completed ballots yet. Closed ballots will appear here.'}</p>}
-    {!loading && !error && <div className="grid md:grid-cols-2 gap-4">{filtered.map(round => {
+    {!loading && !error && <div className="grid md:grid-cols-2 gap-4">{capped.visible.map(round => {
       const topVotes = Math.max(0, ...round.results.map(r => r.votes));
       const leaders = round.results.filter(r => r.votes === topVotes);
       return <article key={round.id} className="bg-white rounded-2xl border p-5">
@@ -50,5 +52,6 @@ export const PastBallots: React.FC<{ onOpen: (id: string) => void }> = ({ onOpen
         <a href={`/?mode=community&round=${encodeURIComponent(round.id)}`} onClick={e => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) { e.preventDefault(); onOpen(round.id); } }} className="inline-block bg-[#0D4734] text-white rounded-xl px-4 py-2 font-bold text-sm">View results and squads</a>
       </article>;
     })}</div>}
+    {!loading && !error && <ShowMore hidden={capped.hidden} total={capped.total} step={8} noun="ballots" onMore={capped.showMore} onAll={capped.showAll} />}
   </section>;
 };
