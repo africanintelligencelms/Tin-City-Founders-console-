@@ -176,7 +176,34 @@ export interface LiveReactionEvent {
 // -------------------------------------------------------------
 
 // What is on the ballot. The host picks the type when opening the round.
-export type RoundKind = 'problem' | 'category' | 'trustee';
+export type RoundKind = 'problem' | 'category' | 'trustee' | 'member';
+
+// How a spotlight was decided. Both land in the same record so the card and the
+// history do not have to care which route produced them.
+export type SpotlightSource = 'picked' | 'voted';
+
+export interface Spotlight {
+  id: string;
+  memberId: string;
+  // The member's details are COPIED in, not looked up. A spotlight is a record
+  // of what was true that week: it has to keep reading correctly after the
+  // member edits their profile, and has to survive them leaving entirely.
+  name: string;
+  organization?: string;
+  stage?: string;
+  bio?: string;
+  giveAsk?: string;
+  link?: string;
+  location?: string;
+  listed?: boolean;
+  source: SpotlightSource;
+  roundId?: string;   // voted only
+  votes?: number;     // voted only
+  note?: string;      // picked only — why the host chose them
+  startedAt: number;
+  endsAt?: string;
+  endedAt?: number;
+}
 
 export interface RoundOption {
   squadMembers?: SquadMember[];
