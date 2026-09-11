@@ -40,6 +40,8 @@ interface Props {
   spotlight: Spotlight | null;
   spotlightHistory: Spotlight[];
   isFirstVisit: boolean;
+  // False until the first server snapshot arrives.
+  loaded: boolean;
   // Whether this device has already voted in the open round. The full ballot
   // object was passed and never read; this is the one fact the card needs.
   ballotCast: boolean;
@@ -48,17 +50,35 @@ interface Props {
   mixerLive: boolean;
 }
 
+type View = 'problems' | 'members' | 'sectors' | 'trustees' | 'ballot' | 'history';
+const NAMED_VIEWS: View[] = ['members', 'sectors', 'trustees', 'history'];
+
+// Every section now has its own URL. Previously four of them shared one — the
+// view param was DELETED for anything but history — so browsing members →
+// sectors → trustees stacked three identical history entries and Back always
+// resolved to Challenges. Challenges keeps the bare URL as the natural home,
+// which is still distinct from the four named ones.
+function readViewFromUrl(): View {
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('round')) return 'ballot';
+  const named = params.get('view') as View | null;
+  return named && NAMED_VIEWS.includes(named) ? named : 'problems';
+}
+
 export function CommunityView(p: Props) {
   const [linkedRound, setLinkedRound] = useState(() => new URLSearchParams(window.location.search).get('round'));
-  const [view, setView] = useState<'problems' | 'members' | 'sectors' | 'trustees' | 'ballot' | 'history'>(() => new URLSearchParams(window.location.search).has('round') ? 'ballot' : new URLSearchParams(window.location.search).get('view') === 'history' ? 'history' : 'problems');
+  const [view, setView] = useState<View>(readViewFromUrl);
   useEffect(() => {
-    const navigate = () => { const id = new URLSearchParams(window.location.search).get('round'); setLinkedRound(id); setView(id ? 'ballot' : new URLSearchParams(window.location.search).get('view') === 'history' ? 'history' : 'problems'); };
+    const navigate = () => {
+      setLinkedRound(new URLSearchParams(window.location.search).get('round'));
+      setView(readViewFromUrl());
+    };
     window.addEventListener('popstate', navigate);
     return () => window.removeEventListener('popstate', navigate);
   }, []);
-  const openSection = (section: 'problems' | 'members' | 'sectors' | 'trustees' | 'history') => {
+  const openSection = (section: Exclude<View, 'ballot'>) => {
     const url = new URL(window.location.href); url.searchParams.delete('round');
-    if (section === 'history') url.searchParams.set('view', 'history'); else url.searchParams.delete('view');
+    if (section === 'problems') url.searchParams.delete('view'); else url.searchParams.set('view', section);
     window.history.pushState({}, '', url); setLinkedRound(null); setView(section);
   };
   const openBallot = (id: string) => {
@@ -74,6 +94,18 @@ export function CommunityView(p: Props) {
     setGuestPromptDismissed(true);
     try { localStorage.setItem('tcf_guest_prompt_dismissed', '1'); } catch {}
   };
+  // "What's new since you were last here", kept entirely on the device. No
+  // server state and nothing recorded about anyone: a timestamp in localStorage,
+  // read once on mount and immediately advanced, so this visit is the baseline
+  // for the next one. A first-ever visit has no baseline and shows nothing —
+  // everything is new, which is not news.
+  const [lastSeen] = useState<number | null>(() => {
+    try {
+      const stored = localStorage.getItem('tcf_last_seen');
+      localStorage.setItem('tcf_last_seen', String(Date.now()));
+      return stored ? Number(stored) : null;
+    } catch { return null; }
+  });
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('All');
   const [sort, setSort] = useState('newest');
@@ -104,6 +136,16 @@ export function CommunityView(p: Props) {
     finally { setBusy(null); }
   };
   const button = 'px-4 py-2.5 rounded-xl border border-[#0D4734]/25 text-sm font-bold hover:bg-[#EBF3EF] disabled:opacity-50';
+  // A round you have not voted in counts as new whenever it opened, because the
+  // ask is still outstanding; challenges and spotlights count only if they
+  // appeared since the last visit.
+  const whatsNew: { label: string; go: () => void }[] = [];
+  if (lastSeen !== null) {
+    const freshProblems = p.problems.filter(item => Date.parse(item.createdAt) > lastSeen).length;
+    if (freshProblems) whatsNew.push({ label: `${plural(freshProblems, 'new challenge')} to look at`, go: () => openSection('problems') });
+    if (p.round?.status === 'open' && !p.ballotCast) whatsNew.push({ label: `A ballot is open: ${p.round.title}`, go: () => openBallot(p.round!.id) });
+    if (p.spotlight && p.spotlight.startedAt > lastSeen) whatsNew.push({ label: `${p.spotlight.name} is in the spotlight`, go: () => openSection('problems') });
+  }
   const filtered = p.problems.filter(item => (category === 'All' || item.category === category) && `${item.title} ${item.description} ${item.submittedBy}`.toLowerCase().includes(query.toLowerCase())).sort((a, b) => sort === 'votes' ? b.upvotes - a.upvotes : sort === 'squads' ? b.commitments - a.commitments : b.createdAt.localeCompare(a.createdAt));
   // Filtering runs over every challenge; only rendering is capped.
   const cappedProblems = useCapped<PlateauProblem>(filtered, `${query}|${category}|${sort}`);
@@ -159,9 +201,9 @@ export function CommunityView(p: Props) {
         <p className="text-sm sm:text-base font-bold">
           Jos founders backing each other’s work.{' '}
           <button onClick={() => openSection('members')} className="font-normal underline decoration-[#0D4734]/30 hover:decoration-[#0D4734]">
-            {p.attendees.length} members
+            {p.loaded ? `${p.attendees.length} members` : '— members'}
           </button>
-          <span className="font-normal"> · {p.problems.length} challenges</span>
+          <span className="font-normal"> · {p.loaded ? p.problems.length : '—'} challenges</span>
         </p>
         <button className="bg-[#E5A93C] text-[#09251B] rounded-xl px-4 py-2.5 font-bold flex items-center gap-2" onClick={() => p.profile ? setSubmitOpen(true) : p.onJoin()}>
           <Plus size={18} /> Share a challenge
@@ -186,6 +228,20 @@ export function CommunityView(p: Props) {
             <button className={`${button} bg-[#0D4734] text-white border-[#0D4734] hover:bg-[#166E52]`} onClick={p.onJoin}>Add your name</button>
             <button className={`${button} bg-white`} onClick={p.onRecover}>Already a member? Find your profile</button>
           </div>
+        </section>
+      )}
+
+      {/* Only what changed since this device was last here, and only for someone
+          the app recognises — a stranger has no "since". Silent when there is
+          nothing, which is most of the time, so it never becomes furniture. */}
+      {p.loaded && p.profile && whatsNew.length > 0 && (
+        <section className="rounded-2xl border border-[#0D4734]/25 bg-[#EBF3EF] p-4 mb-5">
+          <p className="text-xs font-bold uppercase tracking-widest text-[#0D4734]">Since you were last here</p>
+          <ul className="mt-2 space-y-1">
+            {whatsNew.map(item => <li key={item.label} className="text-sm">
+              <button className="text-left underline decoration-[#0D4734]/30 hover:decoration-[#0D4734]" onClick={item.go}>{item.label}</button>
+            </li>)}
+          </ul>
         </section>
       )}
 
@@ -260,12 +316,13 @@ export function CommunityView(p: Props) {
           </article>)}
         </div>
         <ShowMore hidden={cappedProblems.hidden} total={cappedProblems.total} noun="challenges" onMore={cappedProblems.showMore} onAll={cappedProblems.showAll} />
-        {!filtered.length && <div className="bg-white rounded-2xl border p-8 text-center"><h2 className="font-bold text-xl">{p.problems.length ? 'No matching challenges' : 'What should we build together?'}</h2><p className="mt-2 text-stone-600">{p.problems.length ? 'Try another search or sector.' : 'Share the first challenge for the community to explore.'}</p></div>}
+        {!p.loaded && !p.problems.length && <p role="status" className="text-sm text-stone-600">Loading challenges…</p>}
+        {p.loaded && !filtered.length && <div className="bg-white rounded-2xl border p-8 text-center"><h2 className="font-bold text-xl">{p.problems.length ? 'No matching challenges' : 'What should we build together?'}</h2><p className="mt-2 text-stone-600">{p.problems.length ? 'Try another search or sector.' : 'Share the first challenge for the community to explore.'}</p></div>}
       </>}
       {view === 'sectors' && <SuggestSector />}
-      {view === 'sectors' && !p.categories.length && <p className="text-sm text-stone-600">No sectors yet. Suggest one above and the host will review it.</p>}
+      {view === 'sectors' && p.loaded && !p.categories.length && <p className="text-sm text-stone-600">No sectors yet. Suggest one above and the host will review it.</p>}
       {view === 'sectors' && <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">{p.categories.map(item => <article key={item.name} className="bg-white border-2 rounded-2xl p-5"><h2 className="text-xl font-bold">{item.name}</h2><p className="text-sm text-stone-600 my-4">{item.description}</p><button disabled={busy !== null} aria-pressed={p.myVotes.categories.includes(item.name)} className={button} onClick={() => act(item.name, () => p.onVoteCategory(item.name))}>{p.myVotes.categories.includes(item.name) ? 'Supported' : 'Support'} · {item.upvotes}</button></article>)}</div>}
-      {view === 'trustees' && <><p className="text-sm text-stone-600 mb-4">Nominated for the twelve statutory trustee seats.</p><div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">{p.trustees.map(item => <article key={item.id} className="bg-white border-2 rounded-2xl p-5"><p className="text-xs">Seat {item.seatNumber}</p><h2 className="text-xl font-bold">{item.name}</h2><p>{item.titleOrOrg}</p><p className="text-sm text-stone-600 my-4">{item.bio}</p><button className={button} disabled={busy !== null} aria-pressed={p.myVotes.trustees.includes(item.id)} onClick={() => act(item.id, () => p.onVoteTrustee(item.id))}>{p.myVotes.trustees.includes(item.id) ? 'Supported' : 'Support'} · {item.votes}</button></article>)}</div>{!p.trustees.length && <p>No trustees have been nominated yet.</p>}</>}
+      {view === 'trustees' && <><p className="text-sm text-stone-600 mb-4">Nominated for the twelve statutory trustee seats.</p><div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">{p.trustees.map(item => <article key={item.id} className="bg-white border-2 rounded-2xl p-5"><p className="text-xs">Seat {item.seatNumber}</p><h2 className="text-xl font-bold">{item.name}</h2><p>{item.titleOrOrg}</p><p className="text-sm text-stone-600 my-4">{item.bio}</p><button className={button} disabled={busy !== null} aria-pressed={p.myVotes.trustees.includes(item.id)} onClick={() => act(item.id, () => p.onVoteTrustee(item.id))}>{p.myVotes.trustees.includes(item.id) ? 'Supported' : 'Support'} · {item.votes}</button></article>)}</div>{p.loaded && !p.trustees.length && <p>No trustees have been nominated yet.</p>}</>}
     </main>
     <footer className="text-center text-xs text-stone-600 p-6">Tin City Founders · Serious ambition. Serious collaboration.</footer>
     <SeamlessProblemWizard isOpen={submitOpen} onClose={() => setSubmitOpen(false)} onSubmit={p.onSubmit} currentProfile={p.profile} categories={p.categories} />
